@@ -8,6 +8,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Teko:wght@500;600;700&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --accent: #38bdf8;
+      --accent-soft: rgba(56, 189, 248, 0.22);
+      --panel-bg: linear-gradient(180deg, rgba(18, 26, 38, 0.78), rgba(8, 12, 18, 0.72));
+      --panel-border: rgba(148, 210, 255, 0.16);
+      --panel-shadow: 0 6px 22px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
     * {
       box-sizing: border-box;
       user-select: none;
@@ -90,11 +97,13 @@
       transform: translateX(-50%);
       width: 380px;
       height: 40px;
-      background: rgba(10, 15, 20, 0.75);
-      border: 1px solid rgba(80, 150, 120, 0.3);
-      border-radius: 4px;
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
       overflow: hidden;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+      box-shadow: var(--panel-shadow);
+      -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+      mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
     }
     .compass-tape {
       position: absolute;
@@ -111,8 +120,9 @@
     }
     .compass-tick {
       display: inline-block;
-      width: 20px;
+      width: 30px;
       text-align: center;
+      font-size: 12px;
     }
     .compass-major {
       color: #38bdf8;
@@ -124,9 +134,9 @@
       left: 50%;
       transform: translateX(-50%);
       width: 2px;
-      height: 100%;
+      height: 55%;
       background: #ef4444;
-      box-shadow: 0 0 6px #ef4444;
+      box-shadow: 0 0 8px #ef4444;
     }
     .compass-objective {
       position: absolute;
@@ -150,18 +160,21 @@
       width: 110px;
       height: 110px;
       border-radius: 50%;
-      box-shadow: 0 0 15px rgba(56, 189, 248, 0.25);
+      border: 1px solid var(--panel-border);
+      box-shadow: 0 0 18px rgba(56, 189, 248, 0.28), 0 4px 16px rgba(0, 0, 0, 0.5);
     }
 
     .time-status {
       display: flex;
       flex-direction: column;
       gap: 4px;
-      background: rgba(10, 15, 20, 0.75);
-      padding: 8px 14px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 4px;
-      backdrop-filter: blur(4px);
+      background: var(--panel-bg);
+      padding: 8px 16px;
+      border: 1px solid var(--panel-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 6px;
+      box-shadow: var(--panel-shadow);
+      backdrop-filter: blur(6px);
     }
     .time-val {
       font-family: 'Share Tech Mono', monospace;
@@ -252,7 +265,8 @@
     .boss-fill {
       height: 100%;
       width: 100%;
-      background: linear-gradient(90deg, #b91c1c, #ef4444);
+      background: linear-gradient(90deg, #7f1d1d, #dc2626 55%, #f87171);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);
       transition: width 0.1s linear;
     }
 
@@ -267,14 +281,15 @@
     }
     .crosshair-line {
       position: absolute;
-      background: rgba(240, 248, 255, 0.85);
-      box-shadow: 0 0 3px rgba(0,0,0,0.8);
+      background: rgba(240, 248, 255, 0.9);
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.45), 0 0 6px rgba(56, 189, 248, 0.35);
+      border-radius: 1px;
     }
     .ch-top { width: 2px; height: 10px; top: -16px; left: -1px; }
     .ch-bottom { width: 2px; height: 10px; bottom: -16px; left: -1px; }
     .ch-left { height: 2px; width: 10px; left: -16px; top: -1px; }
     .ch-right { height: 2px; width: 10px; right: -16px; top: -1px; }
-    .ch-dot { width: 3px; height: 3px; background: #38bdf8; border-radius: 50%; position: absolute; top: -1.5px; left: -1.5px; }
+    .ch-dot { width: 3px; height: 3px; background: #7dd3fc; border-radius: 50%; position: absolute; top: -1.5px; left: -1.5px; box-shadow: 0 0 6px #38bdf8; }
 
     /* Hit Marker */
     #hit-marker {
@@ -307,10 +322,11 @@
       top: 58%;
       left: 50%;
       transform: translateX(-50%);
-      background: rgba(10, 15, 22, 0.9);
-      border: 1px solid rgba(56, 189, 248, 0.5);
-      padding: 6px 18px;
-      border-radius: 4px;
+      background: var(--panel-bg);
+      border: 1px solid rgba(56, 189, 248, 0.45);
+      padding: 7px 18px;
+      border-radius: 6px;
+      backdrop-filter: blur(6px);
       font-size: 14px;
       font-family: 'Share Tech Mono', monospace;
       color: #e2e8f0;
@@ -560,10 +576,12 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      background: rgba(10, 15, 22, 0.7);
+      background: var(--panel-bg);
       padding: 6px 10px;
-      border-radius: 6px;
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      border: 1px solid var(--panel-border);
+      box-shadow: var(--panel-shadow);
+      backdrop-filter: blur(6px);
       width: fit-content;
     }
     .stomach-label {
@@ -618,17 +636,23 @@
       text-align: center;
     }
     .bar-track {
-      height: 16px;
-      background: rgba(15, 23, 42, 0.8);
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      border-radius: 3px;
+      height: 17px;
+      background: rgba(8, 12, 20, 0.78);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 4px;
       position: relative;
       overflow: hidden;
       min-width: 180px;
       transition: width 0.3s ease;
       box-shadow: inset 0 1px 3px rgba(0,0,0,0.6);
     }
-    .bar-fill { height: 100%; transition: width 0.15s ease-out; }
+    .bar-fill { height: 100%; transition: width 0.15s ease-out; position: relative; }
+    .bar-fill::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(255,255,255,0.32), rgba(255,255,255,0) 55%, rgba(0,0,0,0.18));
+    }
     .health-fill {
       background: linear-gradient(90deg, #b91c1c, #ef4444);
       box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
@@ -654,11 +678,12 @@
     .hotbar-container {
       display: flex;
       gap: 8px;
-      background: rgba(10, 15, 22, 0.75);
+      background: var(--panel-bg);
       padding: 6px 12px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 6px;
-      backdrop-filter: blur(5px);
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      box-shadow: var(--panel-shadow);
+      backdrop-filter: blur(6px);
     }
     .hotbar-slot {
       width: 52px;
@@ -704,11 +729,13 @@
       flex-direction: column;
       align-items: flex-end;
       gap: 4px;
-      background: rgba(10, 15, 22, 0.75);
-      padding: 10px 16px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 6px;
-      backdrop-filter: blur(5px);
+      background: var(--panel-bg);
+      padding: 10px 18px;
+      border: 1px solid var(--panel-border);
+      border-right: 3px solid var(--accent);
+      border-radius: 8px;
+      box-shadow: var(--panel-shadow);
+      backdrop-filter: blur(6px);
     }
     .weapon-name {
       font-family: 'Teko', sans-serif;
@@ -725,10 +752,11 @@
     }
     .ammo-clip {
       font-family: 'Teko', sans-serif;
-      font-size: 44px;
+      font-size: 48px;
       line-height: 1;
       font-weight: 700;
-      color: #38bdf8;
+      color: #7dd3fc;
+      text-shadow: 0 0 14px rgba(56, 189, 248, 0.55);
     }
     .ammo-clip.low {
       color: #ef4444;
@@ -760,6 +788,7 @@
       letter-spacing: 1px;
       text-transform: uppercase;
       white-space: nowrap;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.9);
     }
     .keybind-bar span { color: #94a3b8; }
 
@@ -958,22 +987,25 @@
       left: 0;
       width: 100%;
       height: 100%;
-      background: radial-gradient(circle at center, rgba(15, 23, 42, 0.85) 0%, rgba(5, 8, 12, 0.98) 100%);
+      background: radial-gradient(ellipse at center, rgba(8, 14, 24, 0.55) 0%, rgba(3, 6, 10, 0.88) 100%);
       z-index: 100;
       display: flex;
       flex-direction: column;
       justify-content: center;
       align-items: center;
       padding: 2rem;
-      backdrop-filter: blur(10px);
+      backdrop-filter: blur(2px);
     }
     .title-banner {
       font-family: 'Teko', sans-serif;
       font-size: 72px;
       font-weight: 700;
       letter-spacing: 6px;
-      color: #f8fafc;
-      text-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
+      background: linear-gradient(180deg, #ffffff 25%, #7dd3fc 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      filter: drop-shadow(0 4px 18px rgba(56, 189, 248, 0.45));
       margin-bottom: 0;
       line-height: 1;
       text-align: center;
@@ -989,12 +1021,13 @@
     }
     .briefing-box {
       max-width: 680px;
-      background: rgba(15, 23, 42, 0.7);
-      border: 1px solid rgba(56, 189, 248, 0.3);
-      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.78), rgba(8, 13, 22, 0.72));
+      border: 1px solid rgba(56, 189, 248, 0.28);
+      border-radius: 10px;
       padding: 1.5rem;
       margin-bottom: 2rem;
-      box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.06);
       font-size: 15px;
       line-height: 1.6;
     }

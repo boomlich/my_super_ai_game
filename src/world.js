@@ -1,24 +1,42 @@
-// ZONE ZERO: Valheim World Generation, Physical Pickups & Extraction Finale
+// ZONE ZERO: World Generation — forests, rocks, grass, landmarks, pickups & Extraction Finale
 import * as THREE from 'three';
 import { sounds } from './audio.js';
+import { plankTexture, metalTexture, glowTexture } from './textures.js';
+import {
+  std, emissiveMat, shadowed, createPine, createBerryBush, createScrapPile, createCrate, createTent, strut,
+  bunkerMaterial, sandbagMaterial, buildRockGeometry, buildBushGeometry, buildGrassTuft, createGrassMaterial,
+  buildFlowerGeometry, createLootMesh, createHelicopter
+} from './models.js';
+
+const TOWER_X = -120;
+const TOWER_Z = -140;
+const BUNKER_X = 60;
+const BUNKER_Z = -40;
 
 export class WorldManager {
-  constructor(scene, terrain, inventory) {
+  constructor(scene, terrain, inventory, particles = null) {
     this.scene = scene;
     this.terrain = terrain;
     this.inventory = inventory;
+    this.particles = particles;
 
     this.trees = [];
     this.fallingTrees = [];
     this.resourceNodes = [];
     this.pickups = [];
     this.landmarks = [];
+    this.fireSources = [];
 
     this.extractionActive = false;
     this.extractionTimer = 0;
     this.rescueHelicopter = null;
+    this.heliParts = null;
+
+    this.time = 0;
+    this.beacon = null;
 
     this.spawnFloraAndResources();
+    this.spawnDecor();
     this.spawnLandmarks();
     this.initLootListener();
   }
@@ -30,39 +48,31 @@ export class WorldManager {
     });
   }
 
+  isFlat(x, z, maxDelta = 1.1) {
+    const y = this.terrain.getHeightAt(x, z);
+    return Math.abs(this.terrain.getHeightAt(x + 1.2, z) - y) < maxDelta && Math.abs(this.terrain.getHeightAt(x, z + 1.2) - y) < maxDelta;
+  }
+
+  nearLandmark(x, z, pad = 0) {
+    return Math.hypot(x - BUNKER_X, z - BUNKER_Z) < 12 + pad
+      || Math.hypot(x - TOWER_X, z - TOWER_Z) < 9 + pad
+      || Math.hypot(x, z) < 10 + pad;
+  }
+
   spawnFloraAndResources() {
-    const treeGeo = new THREE.CylinderGeometry(0.35, 0.5, 7.5, 6);
-    const foliageGeo = new THREE.ConeGeometry(2.4, 6.0, 5);
-
-    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x422006, roughness: 0.9, flatShading: true });
-    const foliageMat = new THREE.MeshStandardMaterial({ color: 0x14532d, roughness: 0.8, flatShading: true });
-
-    for (let i = 0; i < 140; i++) {
+    for (let i = 0; i < 900 && this.trees.length < 280; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const radius = 18 + Math.random() * 220;
+      const radius = 18 + Math.random() * 225;
       const x = Math.cos(angle) * radius;
       const z = Math.sin(angle) * radius;
       const y = this.terrain.getHeightAt(x, z);
 
-      if (y > 2.5 && y < 24) {
-        const treeGroup = new THREE.Group();
-
-        const trunk = new THREE.Mesh(treeGeo, trunkMat);
-        trunk.position.y = 3.75;
-        trunk.castShadow = true;
-        trunk.receiveShadow = true;
-        treeGroup.add(trunk);
-
-        const foliage = new THREE.Mesh(foliageGeo, foliageMat);
-        foliage.position.y = 6.8;
-        foliage.castShadow = true;
-        treeGroup.add(foliage);
-
-        treeGroup.position.set(x, y, z);
-        const scale = 0.8 + Math.random() * 0.5;
-        treeGroup.scale.set(scale, scale, scale);
+      if (y > 2.8 && y < 25 && !this.nearLandmark(x, z) && this.isFlat(x, z, 1.4)) {
+        const treeGroup = createPine(y > 15);
+        treeGroup.position.set(x, y - 0.15, z);
+        const scale = 0.8 + Math.random() * 0.65;
+        treeGroup.scale.set(scale, scale * (0.95 + Math.random() * 0.15), scale);
         treeGroup.rotation.y = Math.random() * Math.PI * 2;
-
         this.scene.add(treeGroup);
 
         this.trees.push({
@@ -70,34 +80,26 @@ export class WorldManager {
           hp: 100,
           maxHp: 100,
           position: new THREE.Vector3(x, y, z),
-          scale: scale,
+          scale,
           height: 7.5 * scale,
           fallDirection: new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize()
         });
       }
     }
 
-    const bushGeo = new THREE.DodecahedronGeometry(0.8, 1);
-    const bushMat = new THREE.MeshStandardMaterial({ color: 0x166534, roughness: 0.8 });
-    const berryMat = new THREE.MeshStandardMaterial({ color: 0x7c3aed, roughness: 0.3 });
-
-    for (let i = 0; i < 35; i++) {
+    for (let i = 0; i < 80 && this.resourceNodes.filter(n => n.type === 'berries').length < 35; i++) {
       const angle = Math.random() * Math.PI * 2;
       const radius = 10 + Math.random() * 140;
       const x = Math.cos(angle) * radius;
       const z = Math.sin(angle) * radius;
       const y = this.terrain.getHeightAt(x, z);
 
-      if (y > 2.5 && y < 18) {
-        const bush = new THREE.Mesh(bushGeo, bushMat);
-        bush.position.set(x, y + 0.4, z);
-
-        for (let b = 0; b < 4; b++) {
-          const berry = new THREE.Mesh(new THREE.SphereGeometry(0.15, 4, 4), berryMat);
-          berry.position.set((Math.random() - 0.5) * 0.7, 0.4 + Math.random() * 0.3, (Math.random() - 0.5) * 0.7);
-          bush.add(berry);
-        }
-
+      if (y > 2.8 && y < 18 && !this.nearLandmark(x, z)) {
+        const bush = createBerryBush();
+        bush.position.set(x, y - 0.05, z);
+        bush.rotation.y = Math.random() * Math.PI * 2;
+        const s = 0.9 + Math.random() * 0.4;
+        bush.scale.setScalar(s);
         this.scene.add(bush);
         this.resourceNodes.push({
           mesh: bush,
@@ -109,21 +111,17 @@ export class WorldManager {
       }
     }
 
-    const scrapGeo = new THREE.BoxGeometry(1.2, 0.8, 1.0);
-    const scrapMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.7, roughness: 0.4 });
-
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 70 && this.resourceNodes.filter(n => n.type === 'scrap').length < 25; i++) {
       const angle = Math.random() * Math.PI * 2;
       const radius = 25 + Math.random() * 180;
       const x = Math.cos(angle) * radius;
       const z = Math.sin(angle) * radius;
       const y = this.terrain.getHeightAt(x, z);
 
-      if (y > 2.5 && y < 26) {
-        const scrap = new THREE.Mesh(scrapGeo, scrapMat);
-        scrap.position.set(x, y + 0.4, z);
-        scrap.rotation.set(Math.random() * 0.3, Math.random() * Math.PI, Math.random() * 0.2);
-        scrap.castShadow = true;
+      if (y > 2.8 && y < 26 && !this.nearLandmark(x, z)) {
+        const scrap = createScrapPile();
+        scrap.position.set(x, y - 0.05, z);
+        scrap.rotation.y = Math.random() * Math.PI * 2;
         this.scene.add(scrap);
 
         this.resourceNodes.push({
@@ -137,65 +135,344 @@ export class WorldManager {
     }
   }
 
+  // Non-interactive set dressing: grass, flowers, boulders, undergrowth
+  spawnDecor() {
+    const dummy = new THREE.Object3D();
+    const color = new THREE.Color();
+    const wl = this.terrain.waterLevel;
+
+    // Grass
+    const grassCount = 26000;
+    const grass = new THREE.InstancedMesh(buildGrassTuft(), createGrassMaterial(), grassCount);
+    let n = 0;
+    for (let a = 0; a < grassCount * 4 && n < grassCount; a++) {
+      const ang = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(Math.random()) * 185;
+      const x = Math.cos(ang) * r;
+      const z = Math.sin(ang) * r;
+      const y = this.terrain.getHeightAt(x, z);
+      if (y < wl + 0.7 || y > 17) continue;
+      if (Math.hypot(x, z) < 5 || Math.hypot(x - BUNKER_X, z - BUNKER_Z) < 8) continue;
+      if (!this.isFlat(x, z, 0.9)) continue;
+
+      dummy.position.set(x, y - 0.03, z);
+      dummy.rotation.set(0, Math.random() * Math.PI * 2, 0);
+      const s = 0.75 + Math.random() * 0.7;
+      dummy.scale.set(s, 0.8 + Math.random() * 0.7, s);
+      dummy.updateMatrix();
+      grass.setMatrixAt(n, dummy.matrix);
+      const forest = Math.min(1, Math.hypot(x, z) / 140);
+      const shade = 0.85 + Math.random() * 0.35 - forest * 0.2;
+      color.setRGB(shade, shade * (0.95 + Math.random() * 0.1), shade * (0.7 + Math.random() * 0.25));
+      grass.setColorAt(n, color);
+      n++;
+    }
+    grass.count = n;
+    grass.frustumCulled = false;
+    this.scene.add(grass);
+
+    // Flowers dotted through the meadow
+    const flowerCount = 900;
+    const flowers = new THREE.InstancedMesh(buildFlowerGeometry(), std(0xffffff, { vertexColors: true, roughness: 0.6 }), flowerCount);
+    const palette = [0xffffff, 0xfff17a, 0xff7ab6, 0xa78bfa, 0xff8a4c, 0x7dd3fc];
+    n = 0;
+    for (let a = 0; a < flowerCount * 5 && n < flowerCount; a++) {
+      const ang = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(Math.random()) * 130;
+      const x = Math.cos(ang) * r;
+      const z = Math.sin(ang) * r;
+      const y = this.terrain.getHeightAt(x, z);
+      if (y < wl + 0.9 || y > 12 || Math.hypot(x, z) < 6 || !this.isFlat(x, z, 0.8)) continue;
+      dummy.position.set(x, y, z);
+      dummy.rotation.set(0, Math.random() * 6, 0);
+      dummy.scale.setScalar(0.8 + Math.random() * 0.6);
+      dummy.updateMatrix();
+      flowers.setMatrixAt(n, dummy.matrix);
+      flowers.setColorAt(n, color.set(palette[Math.floor(Math.random() * palette.length)]));
+      n++;
+    }
+    flowers.count = n;
+    flowers.frustumCulled = false;
+    this.scene.add(flowers);
+
+    // Boulders (bigger and more frequent near the mountain)
+    const rockCount = 150;
+    const rocks = new THREE.InstancedMesh(buildRockGeometry(3), std(0xffffff, { vertexColors: true, roughness: 0.95 }), rockCount);
+    n = 0;
+    for (let a = 0; a < rockCount * 5 && n < rockCount; a++) {
+      const nearPeak = Math.random() < 0.4;
+      const ang = Math.random() * Math.PI * 2;
+      const r = nearPeak ? Math.random() * 130 : 15 + Math.random() * 225;
+      const x = (nearPeak ? TOWER_X : 0) + Math.cos(ang) * r;
+      const z = (nearPeak ? TOWER_Z : 0) + Math.sin(ang) * r;
+      const y = this.terrain.getHeightAt(x, z);
+      if (y < wl + 0.2 || this.nearLandmark(x, z)) continue;
+      dummy.position.set(x, y + 0.15, z);
+      dummy.rotation.set((Math.random() - 0.5) * 0.4, Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.4);
+      const s = (nearPeak ? 0.9 : 0.5) + Math.random() * (nearPeak ? 3.2 : 1.6);
+      dummy.scale.set(s * (0.8 + Math.random() * 0.5), s * (0.7 + Math.random() * 0.5), s * (0.8 + Math.random() * 0.5));
+      dummy.updateMatrix();
+      rocks.setMatrixAt(n, dummy.matrix);
+      const v = 0.8 + Math.random() * 0.4;
+      rocks.setColorAt(n, color.setRGB(v, v, v));
+      n++;
+    }
+    rocks.count = n;
+    rocks.frustumCulled = false;
+    shadowed(rocks);
+    this.scene.add(rocks);
+
+    // Undergrowth
+    const shrubCount = 160;
+    const shrubs = new THREE.InstancedMesh(buildBushGeometry(), std(0xffffff, { vertexColors: true, roughness: 0.92 }), shrubCount);
+    n = 0;
+    for (let a = 0; a < shrubCount * 5 && n < shrubCount; a++) {
+      const ang = Math.random() * Math.PI * 2;
+      const r = 14 + Math.random() * 190;
+      const x = Math.cos(ang) * r;
+      const z = Math.sin(ang) * r;
+      const y = this.terrain.getHeightAt(x, z);
+      if (y < wl + 0.8 || y > 18 || this.nearLandmark(x, z)) continue;
+      dummy.position.set(x, y - 0.05, z);
+      dummy.rotation.set(0, Math.random() * 6, 0);
+      dummy.scale.setScalar(0.6 + Math.random() * 1.0);
+      dummy.updateMatrix();
+      shrubs.setMatrixAt(n, dummy.matrix);
+      const v = 0.8 + Math.random() * 0.35;
+      shrubs.setColorAt(n, color.setRGB(v * (0.9 + Math.random() * 0.2), v, v * 0.9));
+      n++;
+    }
+    shrubs.count = n;
+    shrubs.frustumCulled = false;
+    shadowed(shrubs);
+    this.scene.add(shrubs);
+  }
+
   spawnLandmarks() {
-    const baseCamp = new THREE.Group();
-    const floor = new THREE.Mesh(
-      new THREE.BoxGeometry(6, 0.2, 6),
-      new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.9 })
-    );
-    floor.position.set(0, this.terrain.getHeightAt(0, 0) + 0.1, 0);
-    baseCamp.add(floor);
+    this.buildBaseCamp();
+    this.buildBunker();
+    this.buildRadioTower();
+  }
 
-    const campFire = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.7, 0.8, 0.3, 8),
-      new THREE.MeshStandardMaterial({ color: 0x475569 })
-    );
-    campFire.position.set(0, this.terrain.getHeightAt(0, 0) + 0.2, 0);
-    const fireLight = new THREE.PointLight(0xf97316, 2.5, 12);
-    fireLight.position.y = 0.5;
-    campFire.add(fireLight);
-    baseCamp.add(campFire);
-    this.scene.add(baseCamp);
+  buildBaseCamp() {
+    const ground = this.terrain.getHeightAt(0, 0);
+    const camp = new THREE.Group();
+    camp.position.set(0, ground, 0);
 
-    const bunker = new THREE.Group();
-    const bunkerY = this.terrain.getHeightAt(60, -40);
-    const bunkerMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(12, 4, 10),
-      new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.9 })
-    );
-    bunkerMesh.position.set(60, bunkerY + 2, -40);
-    bunkerMesh.castShadow = true;
-    bunkerMesh.receiveShadow = true;
-    bunker.add(bunkerMesh);
-    this.scene.add(bunker);
+    const deck = shadowed(new THREE.Mesh(
+      new THREE.BoxGeometry(7, 0.16, 7),
+      std(0xffffff, { map: plankTexture('#7a5230').clone(), roughness: 0.9 })
+    ));
+    deck.material.map.repeat.set(3, 3);
+    deck.position.y = 0.08;
+    camp.add(deck);
 
-    const towerGroup = new THREE.Group();
-    const towerX = -120;
-    const towerZ = -140;
-    const towerY = this.terrain.getHeightAt(towerX, towerZ);
+    // Fire pit
+    const stone = std(0xffffff, { vertexColors: true, roughness: 0.95 });
+    const stoneGeo = buildRockGeometry(7);
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2;
+      const rock = shadowed(new THREE.Mesh(stoneGeo, stone));
+      rock.position.set(Math.cos(a) * 0.78, 0.2, Math.sin(a) * 0.78);
+      rock.scale.set(0.22, 0.2, 0.22);
+      rock.rotation.y = a * 3;
+      camp.add(rock);
+    }
+    const ash = new THREE.Mesh(new THREE.CircleGeometry(0.7, 20), std(0x151413, { roughness: 1 }));
+    ash.rotation.x = -Math.PI / 2;
+    ash.position.y = 0.17;
+    camp.add(ash);
+    const barkMat = std(0xffffff, { map: plankTexture('#4a3220'), roughness: 0.95 });
+    for (let i = 0; i < 4; i++) {
+      const log = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 1.0, 7), barkMat));
+      log.rotation.set(Math.PI / 2 - 0.35, (i / 4) * Math.PI * 2, 0);
+      log.position.set(0, 0.3, 0);
+      camp.add(log);
+    }
+    const embers = new THREE.Mesh(new THREE.CircleGeometry(0.45, 16), emissiveMat(0xff5a14, 1.4));
+    embers.rotation.x = -Math.PI / 2;
+    embers.position.y = 0.19;
+    camp.add(embers);
 
-    const mastGeo = new THREE.CylinderGeometry(0.4, 1.2, 28, 4);
-    const mastMat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.8, roughness: 0.3 });
-    const mast = new THREE.Mesh(mastGeo, mastMat);
-    mast.position.set(towerX, towerY + 14, towerZ);
-    mast.castShadow = true;
-    towerGroup.add(mast);
+    const fireLight = new THREE.PointLight(0xff8a3a, 30, 18, 2);
+    fireLight.position.set(0, 1.1, 0);
+    camp.add(fireLight);
+    this.fireSources.push({ position: new THREE.Vector3(0, ground + 0.2, 0), light: fireLight, base: 30 });
 
-    const consoleMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(1.2, 1.4, 0.8),
-      new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.6 })
-    );
-    consoleMesh.position.set(towerX, towerY + 0.7, towerZ + 2);
-    towerGroup.add(consoleMesh);
+    // Seating logs
+    for (const [x, z, ry] of [[2.2, 0, Math.PI / 2], [-2.1, 0.3, Math.PI / 2], [0.2, 2.2, 0]]) {
+      const seat = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.22, 1.9, 8), barkMat));
+      seat.rotation.set(Math.PI / 2, 0, ry);
+      seat.position.set(x, 0.38, z);
+      camp.add(seat);
+    }
 
-    const beaconLight = new THREE.PointLight(0xef4444, 3.5, 60);
-    beaconLight.position.set(towerX, towerY + 28, towerZ);
-    towerGroup.add(beaconLight);
+    // Tents, crates, lantern post
+    const tentA = createTent('#4b5d3a');
+    tentA.position.set(-4.6, 0.1, -3.2);
+    tentA.rotation.y = 0.5;
+    const tentB = createTent('#5b4a32');
+    tentB.position.set(4.9, 0.1, -3.6);
+    tentB.rotation.y = -0.4;
+    camp.add(tentA, tentB);
 
-    this.scene.add(towerGroup);
+    const crateA = createCrate(0.9);
+    crateA.position.set(-2.6, 0.16, -3.2);
+    const crateB = createCrate(0.7);
+    crateB.position.set(-1.6, 0.16, -3.5);
+    crateB.rotation.y = 0.5;
+    const crateC = createCrate(0.65);
+    crateC.position.set(-2.3, 0.86, -3.3);
+    crateC.rotation.y = 0.8;
+    camp.add(crateA, crateB, crateC);
+
+    const pole = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 2.6, 8), std(0x2a2a2e, { metalness: 0.7, roughness: 0.5 })));
+    pole.position.set(3.0, 1.4, 2.6);
+    camp.add(pole);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), emissiveMat(0xffd28a, 2.6));
+    lamp.position.set(3.0, 2.75, 2.6);
+    camp.add(lamp);
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTexture(), color: new THREE.Color(1.2, 0.8, 0.4), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+    }));
+    halo.scale.setScalar(1.1);
+    halo.position.copy(lamp.position);
+    camp.add(halo);
+
+    this.scene.add(camp);
+  }
+
+  buildBunker() {
+    const y = this.terrain.getHeightAt(BUNKER_X, BUNKER_Z);
+    const group = new THREE.Group();
+    group.position.set(BUNKER_X, y, BUNKER_Z);
+    const concrete = bunkerMaterial();
+    const dark = std(0x0a0c0e, { roughness: 1 });
+    const metal = std(0xffffff, { map: metalTexture('#4a5560'), metalness: 0.7, roughness: 0.55 });
+
+    const body = shadowed(new THREE.Mesh(new THREE.BoxGeometry(12, 4, 10), concrete));
+    body.material.map = body.material.map.clone();
+    body.material.map.repeat.set(3, 1);
+    body.position.y = 1.7;
+    group.add(body);
+    const slab = shadowed(new THREE.Mesh(new THREE.BoxGeometry(12.8, 0.45, 10.8), concrete));
+    slab.position.y = 3.9;
+    group.add(slab);
+    const door = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.7, 0.3), dark);
+    door.position.set(0, 1.35, 5.02);
+    group.add(door);
+    const frame = shadowed(new THREE.Mesh(new THREE.BoxGeometry(2.7, 3.0, 0.2), metal));
+    frame.position.set(0, 1.5, 5.0);
+    group.add(frame);
+    for (const x of [-4, 4]) {
+      const slit = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.35, 0.3), dark);
+      slit.position.set(x, 2.4, 5.02);
+      group.add(slit);
+    }
+    for (const x of [-3, 3]) {
+      const vent = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.8, 10), metal));
+      vent.position.set(x, 4.5, -1);
+      group.add(vent);
+    }
+    const mast = strut(new THREE.Vector3(4, 4.1, 3), new THREE.Vector3(4, 8.5, 3), 0.05, metal);
+    group.add(mast);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), emissiveMat(0xff2222, 4));
+    bulb.position.set(4, 8.55, 3);
+    group.add(bulb);
+
+    const bag = sandbagMaterial();
+    const bagGeo = new THREE.SphereGeometry(0.45, 10, 8);
+    for (let row = 0; row < 3; row++) {
+      for (let i = 0; i < 5 - row; i++) {
+        for (const side of [-1, 1]) {
+          const b = shadowed(new THREE.Mesh(bagGeo, bag));
+          b.scale.set(1.0, 0.45, 0.62);
+          b.position.set(side * (3.8 + i * 0.85 + row * 0.4), 0.2 + row * 0.38, 6.3 + (i % 2) * 0.06);
+          b.rotation.y = (Math.random() - 0.5) * 0.2;
+          group.add(b);
+        }
+      }
+    }
+    const barrel = createScrapPile();
+    barrel.position.set(-6.8, 0, 2);
+    group.add(barrel);
+    this.scene.add(group);
+  }
+
+  buildRadioTower() {
+    const y = this.terrain.getHeightAt(TOWER_X, TOWER_Z);
+    const group = new THREE.Group();
+    group.position.set(TOWER_X, y, TOWER_Z);
+    const steel = std(0xffffff, { map: metalTexture('#c2751d'), metalness: 0.75, roughness: 0.45 });
+    const darkSteel = std(0x2d333b, { metalness: 0.85, roughness: 0.4 });
+
+    const height = 26;
+    const baseHalf = 1.9;
+    const topHalf = 0.55;
+    const legPoint = (i, h) => {
+      const t = h / height;
+      const half = baseHalf + (topHalf - baseHalf) * t;
+      const sx = i % 2 === 0 ? -1 : 1;
+      const sz = i < 2 ? -1 : 1;
+      return new THREE.Vector3(sx * half, h, sz * half);
+    };
+    for (let i = 0; i < 4; i++) group.add(strut(legPoint(i, 0), legPoint(i, height), 0.12, steel));
+
+    const levels = 6;
+    for (let l = 0; l < levels; l++) {
+      const h0 = (l / levels) * height;
+      const h1 = ((l + 1) / levels) * height;
+      const ring = [[0, 1], [1, 3], [3, 2], [2, 0]];
+      for (const [a, b] of ring) {
+        group.add(strut(legPoint(a, h1), legPoint(b, h1), 0.06, steel));
+        group.add(strut(legPoint(a, h0), legPoint(b === a ? 0 : b, h1), 0.045, steel));
+      }
+    }
+
+    const platform = shadowed(new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.18, 2.6), darkSteel));
+    platform.position.y = height + 0.1;
+    group.add(platform);
+    group.add(strut(new THREE.Vector3(0, height, 0), new THREE.Vector3(0, height + 6, 0), 0.07, steel));
+
+    const dish = shadowed(new THREE.Mesh(new THREE.SphereGeometry(1.0, 20, 10, 0, Math.PI * 2, 0, Math.PI * 0.32), std(0xdcdfe4, { metalness: 0.6, roughness: 0.35, side: THREE.DoubleSide })));
+    dish.position.set(0.9, height + 1.6, 0.9);
+    dish.rotation.set(-1.0, 0.7, 0);
+    group.add(dish);
+    group.add(strut(new THREE.Vector3(0.9, height + 1.6, 0.9), new THREE.Vector3(0.65, height + 2.3, 0.55), 0.04, darkSteel));
+
+    // Control shed + console
+    const shed = shadowed(new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.5, 2.6), bunkerMaterial()));
+    shed.position.set(4.2, 1.25, -1.0);
+    group.add(shed);
+    const roof = shadowed(new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.2, 3.0), darkSteel));
+    roof.position.set(4.2, 2.6, -1.0);
+    group.add(roof);
+    const window_ = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.7, 0.1), emissiveMat(0x2dd4ff, 1.6));
+    window_.position.set(4.2, 1.5, 0.35);
+    group.add(window_);
+
+    const consoleMesh = shadowed(new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.1, 0.8), std(0x1f3c4d, { metalness: 0.6, roughness: 0.4 })));
+    consoleMesh.position.set(0, 0.55, 2);
+    group.add(consoleMesh);
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.45), emissiveMat(0x38bdf8, 2.2));
+    screen.position.set(0, 1.0, 2.41);
+    screen.rotation.x = -0.35;
+    group.add(screen);
+    this.consoleScreen = screen;
+
+    // Aircraft warning beacon
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 10), emissiveMat(0xff2a2a, 3));
+    bulb.position.set(0, height + 6.2, 0);
+    group.add(bulb);
+    const beaconLight = new THREE.PointLight(0xff3030, 700, 70, 2);
+    beaconLight.position.set(0, height + 6.2, 0);
+    group.add(beaconLight);
+    this.beacon = { bulb, light: beaconLight, base: 700 };
+
+    this.scene.add(group);
     this.landmarks.push({
       name: 'RADIO RELAY STATION',
-      position: new THREE.Vector3(towerX, towerY, towerZ),
+      position: new THREE.Vector3(TOWER_X, y, TOWER_Z),
       isObjective: true
     });
   }
@@ -226,6 +503,8 @@ export class WorldManager {
   }
 
   update(delta) {
+    this.time += delta;
+
     for (let i = this.fallingTrees.length - 1; i >= 0; i--) {
       const ft = this.fallingTrees[i];
       ft.angularVelocity += 1.8 * delta;
@@ -239,6 +518,7 @@ export class WorldManager {
 
       if (ft.fallAngle >= Math.PI * 0.48) {
         this.spawnWoodLogs(ft.position, ft.scale);
+        this.treeImpactFX(ft);
         this.scene.remove(ft.mesh);
         this.fallingTrees.splice(i, 1);
       }
@@ -247,7 +527,22 @@ export class WorldManager {
     for (let i = this.pickups.length - 1; i >= 0; i--) {
       const p = this.pickups[i];
       p.mesh.rotation.y += 1.6 * delta;
-      p.mesh.position.y = p.baseY + Math.sin(Date.now() * 0.003 + p.seed) * 0.15;
+      p.mesh.position.y = p.baseY + Math.sin(this.time * 3 + p.seed) * 0.15;
+    }
+
+    // Fire flicker
+    for (const f of this.fireSources) {
+      f.light.intensity = f.base * (0.8 + 0.2 * Math.sin(this.time * 17 + 1.3) + 0.12 * Math.sin(this.time * 41) + (Math.random() - 0.5) * 0.12);
+    }
+
+    // Beacon pulse
+    if (this.beacon) {
+      const pulse = Math.pow(Math.max(0, Math.sin(this.time * 2.0)), 3);
+      this.beacon.light.intensity = this.beacon.base * pulse;
+      this.beacon.bulb.scale.setScalar(0.6 + pulse * 0.6);
+    }
+    if (this.consoleScreen) {
+      this.consoleScreen.material.color.setRGB(0.15, 0.55 + Math.sin(this.time * 6) * 0.06, 0.95).multiplyScalar(2.2);
     }
 
     if (this.extractionActive && this.rescueHelicopter) {
@@ -255,21 +550,37 @@ export class WorldManager {
       if (this.rescueHelicopter.position.y > 18.0) {
         this.rescueHelicopter.position.y -= 4.0 * delta;
       }
+      if (this.heliParts) {
+        this.heliParts.rotor.rotation.y += 38 * delta;
+        this.heliParts.tailRotor.rotation.x += 50 * delta;
+      }
+      this.rescueHelicopter.rotation.z = Math.sin(this.time * 1.4) * 0.025;
+    }
+  }
+
+  treeImpactFX(ft) {
+    if (!this.particles) return;
+    const hit = ft.position.clone().addScaledVector(ft.fallDir, 7.5 * ft.scale * 0.85);
+    hit.y = this.terrain.getHeightAt(hit.x, hit.z) + 0.2;
+    const up = new THREE.Vector3(0, 1, 0);
+    this.particles.createImpact(hit, up, 'wood');
+    for (let i = 0; i < 14; i++) {
+      this.particles.spawn({
+        x: hit.x + (Math.random() - 0.5) * 2.5, y: hit.y, z: hit.z + (Math.random() - 0.5) * 2.5,
+        vx: (Math.random() - 0.5) * 2.5, vy: 0.5 + Math.random() * 1.5, vz: (Math.random() - 0.5) * 2.5,
+        life: 1.2 + Math.random() * 0.8, size0: 0.5, size1: 2.4, color: 0x8a7a5a, alpha: 0.4, drag: 1.4, fadeIn: 0.1
+      });
     }
   }
 
   spawnWoodLogs(pos, scale) {
-    const logGeo = new THREE.CylinderGeometry(0.25, 0.25, 1.8, 6);
-    const logMat = new THREE.MeshStandardMaterial({ color: 0x854d0e, roughness: 0.9 });
-
     for (let i = 0; i < 4; i++) {
-      const log = new THREE.Mesh(logGeo, logMat);
+      const log = createLootMesh('wood');
       const offsetX = (Math.random() - 0.5) * 2.5;
       const offsetZ = (Math.random() - 0.5) * 2.5;
       const groundY = this.terrain.getHeightAt(pos.x + offsetX, pos.z + offsetZ);
 
-      log.position.set(pos.x + offsetX, groundY + 0.3, pos.z + offsetZ);
-      log.rotation.z = Math.PI * 0.5;
+      log.position.set(pos.x + offsetX, groundY + 0.5, pos.z + offsetZ);
       log.rotation.y = Math.random() * Math.PI;
       this.scene.add(log);
 
@@ -277,23 +588,15 @@ export class WorldManager {
         mesh: log,
         itemId: 'wood',
         count: 2,
-        baseY: groundY + 0.3,
+        baseY: groundY + 0.5,
         seed: Math.random() * 10
       });
     }
   }
 
   spawnLootItem(pos, itemId, count) {
-    let geo = new THREE.BoxGeometry(0.35, 0.35, 0.35);
-    let color = 0x38bdf8;
-    if (itemId === 'raw_meat') color = 0xef4444;
-    else if (itemId === 'behemoth_core') {
-      geo = new THREE.DodecahedronGeometry(0.4, 1);
-      color = 0x06b6d4;
-    }
-
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: color, metalness: 0.8 }));
-    mesh.position.copy(pos).add(new THREE.Vector3((Math.random() - 0.5) * 1.5, 0.5, (Math.random() - 0.5) * 1.5));
+    const mesh = createLootMesh(itemId);
+    mesh.position.copy(pos).add(new THREE.Vector3((Math.random() - 0.5) * 1.5, 0.6, (Math.random() - 0.5) * 1.5));
     this.scene.add(mesh);
 
     this.pickups.push({
@@ -351,16 +654,13 @@ export class WorldManager {
     this.extractionTimer = 60.0;
     sounds.playRaidAlarm();
 
-    const heliGroup = new THREE.Group();
-    const heliBody = new THREE.Mesh(
-      new THREE.BoxGeometry(6, 3, 10),
-      new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.9 })
-    );
-    heliGroup.add(heliBody);
+    const heli = createHelicopter();
+    const heliGroup = heli.group;
+    this.heliParts = heli;
 
-    const searchlight = new THREE.SpotLight(0x38bdf8, 8, 80, Math.PI / 4, 0.4);
-    searchlight.position.set(0, 0, 0);
-    searchlight.target.position.set(0, -30, 0);
+    const searchlight = new THREE.SpotLight(0xbfe9ff, 900, 90, Math.PI / 7, 0.5, 1.6);
+    searchlight.position.set(0, -1.5, 2);
+    searchlight.target.position.set(0, -30, 4);
     heliGroup.add(searchlight);
     heliGroup.add(searchlight.target);
 

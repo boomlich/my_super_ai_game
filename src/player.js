@@ -1,6 +1,10 @@
 // ZONE ZERO: Modern FPS Controller, Tactical Ballistics, Grenades & Swimming Engine
 import * as THREE from 'three';
 import { sounds } from './audio.js';
+import { buildWeaponModel, createMuzzleFlash } from './weapons.js';
+import { createGrenadeMesh } from './models.js';
+
+const VIEWMODEL_SCALE = 0.85;
 
 export class PlayerController {
   constructor(camera, scene, terrain, survival, inventory, building, enemies, worldManager, particles) {
@@ -103,7 +107,18 @@ export class PlayerController {
     this.camera.add(this.weaponGroup);
     this.weaponMesh = null;
     this.slideMesh = null;
+    this.slideRest = new THREE.Vector3();
+    this.slideKick = 0;
     this.muzzleLight = null;
+    this.muzzleObject = null;
+    this.muzzleFlash = null;
+    this.flashTimer = 0;
+    this.sightY = 0.1;
+    this.meleeSwing = 0;
+    this.scopeAmount = 0;
+    this.restPose = [0.24, -0.22, -0.5];
+    this.weaponRestRotation = new THREE.Euler();
+    this._muzzleWorld = new THREE.Vector3();
 
     this.keys = {};
     this.mouseDown = false;
@@ -257,118 +272,44 @@ export class PlayerController {
       this.weaponGroup.remove(this.weaponGroup.children[0]);
     }
 
-    const group = new THREE.Group();
+    const model = buildWeaponModel(weapon.type);
+    const group = model.group;
 
-    if (weapon.type === 'rifle') {
-      const receiver = new THREE.Mesh(
-        new THREE.BoxGeometry(0.08, 0.14, 0.5),
-        new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.8, roughness: 0.3 })
-      );
-      group.add(receiver);
+    const restPose = {
+      rifle: [0.2, -0.2, -0.46],
+      shotgun: [0.19, -0.2, -0.5],
+      sniper: [0.19, -0.21, -0.55],
+      hammer: [0.24, -0.26, -0.45],
+      axe: [0.24, -0.26, -0.45]
+    }[weapon.type];
+    group.position.set(...restPose);
+    group.scale.setScalar(VIEWMODEL_SCALE);
+    this.restPose = restPose;
 
-      const slide = new THREE.Mesh(
-        new THREE.BoxGeometry(0.06, 0.05, 0.22),
-        new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.9 })
-      );
-      slide.position.set(0, 0.05, -0.05);
-      group.add(slide);
-      this.slideMesh = slide;
+    this.slideMesh = model.slide;
+    if (model.slide) this.slideRest.copy(model.slide.position);
+    this.slideKick = 0;
+    this.sightY = model.sightY * VIEWMODEL_SCALE;
+    this.muzzleObject = model.muzzle;
+    this.meleeSwing = 0;
 
-      const barrel = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.02, 0.02, 0.45, 8),
-        new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.9, roughness: 0.2 })
-      );
-      barrel.rotation.x = Math.PI * 0.5;
-      barrel.position.set(0, 0.02, -0.4);
-      group.add(barrel);
-
-      const mag = new THREE.Mesh(
-        new THREE.BoxGeometry(0.06, 0.22, 0.12),
-        new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.7 })
-      );
-      mag.position.set(0, -0.15, -0.05);
-      mag.rotation.x = 0.2;
-      group.add(mag);
-
-      const sight = new THREE.Mesh(
-        new THREE.BoxGeometry(0.06, 0.08, 0.1),
-        new THREE.MeshStandardMaterial({ color: 0x0284c7, transparent: true, opacity: 0.85 })
-      );
-      sight.position.set(0, 0.1, -0.08);
-      group.add(sight);
-
-      group.position.set(0.24, -0.22, -0.5);
-    } else if (weapon.type === 'shotgun') {
-      const body = new THREE.Mesh(
-        new THREE.BoxGeometry(0.09, 0.12, 0.65),
-        new THREE.MeshStandardMaterial({ color: 0x18181b, metalness: 0.8 })
-      );
-      group.add(body);
-
-      const tube = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.03, 0.03, 0.6, 8),
-        new THREE.MeshStandardMaterial({ color: 0x3f3f46, metalness: 0.85 })
-      );
-      tube.rotation.x = Math.PI * 0.5;
-      tube.position.set(0, -0.04, -0.25);
-      group.add(tube);
-
-      group.position.set(0.22, -0.22, -0.55);
-    } else if (weapon.type === 'sniper') {
-      const body = new THREE.Mesh(
-        new THREE.BoxGeometry(0.08, 0.12, 0.85),
-        new THREE.MeshStandardMaterial({ color: 0x2e3b2e, metalness: 0.6 })
-      );
-      group.add(body);
-
-      const scope = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.04, 0.04, 0.35, 8),
-        new THREE.MeshStandardMaterial({ color: 0x09090b, metalness: 0.9 })
-      );
-      scope.rotation.x = Math.PI * 0.5;
-      scope.position.set(0, 0.11, -0.05);
-      group.add(scope);
-
-      group.position.set(0.22, -0.24, -0.6);
-    } else if (weapon.type === 'hammer') {
-      const handle = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.03, 0.03, 0.6, 6),
-        new THREE.MeshStandardMaterial({ color: 0x78350f })
-      );
-      group.add(handle);
-
-      const head = new THREE.Mesh(
-        new THREE.BoxGeometry(0.12, 0.14, 0.25),
-        new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.8 })
-      );
-      head.position.set(0, 0.28, 0);
-      group.add(head);
-
-      group.position.set(0.25, -0.25, -0.45);
-      group.rotation.x = 0.4;
-    } else if (weapon.type === 'axe') {
-      const handle = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.03, 0.03, 0.55, 6),
-        new THREE.MeshStandardMaterial({ color: 0x1e293b })
-      );
-      group.add(handle);
-
-      const blade = new THREE.Mesh(
-        new THREE.BoxGeometry(0.03, 0.18, 0.2),
-        new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.9 })
-      );
-      blade.position.set(0, 0.24, 0.08);
-      group.add(blade);
-
-      group.position.set(0.25, -0.25, -0.45);
+    this.muzzleLight = new THREE.PointLight(0xffa24a, 0, 9, 2);
+    this.muzzleFlash = null;
+    if (model.muzzle) {
+      this.muzzleLight.position.copy(model.muzzle.position).add(new THREE.Vector3(0, 0, -0.1));
+      group.add(this.muzzleLight);
+      this.muzzleFlash = createMuzzleFlash();
+      this.muzzleFlash.position.copy(model.muzzle.position);
+      this.muzzleFlash.scale.setScalar(model.flashScale);
+      group.add(this.muzzleFlash);
+    } else {
+      // Keep the light in the scene graph so the light count (and shader programs) never change
+      group.add(this.muzzleLight);
     }
-
-    this.muzzleLight = new THREE.PointLight(0xf59e0b, 0, 8);
-    this.muzzleLight.position.set(0, 0.02, -0.6);
-    group.add(this.muzzleLight);
 
     this.weaponGroup.add(group);
     this.weaponMesh = group;
+    this.weaponRestRotation = group.rotation.clone();
   }
 
   throwGrenade() {
@@ -386,9 +327,7 @@ export class PlayerController {
     this.inventory.consumeItem('grenade', 1);
     sounds.playPinPull();
 
-    const grenadeGeo = new THREE.SphereGeometry(0.12, 8, 8);
-    const grenadeMat = new THREE.MeshStandardMaterial({ color: 0x14532d, roughness: 0.5, metalness: 0.7 });
-    const mesh = new THREE.Mesh(grenadeGeo, grenadeMat);
+    const mesh = createGrenadeMesh();
 
     const ray = this.getCameraRay();
     mesh.position.copy(ray.origin).addScaledVector(ray.direction, 0.6);
@@ -414,6 +353,7 @@ export class PlayerController {
 
     if (weapon.type === 'hammer') {
       this.building.placePiece();
+      this.meleeSwing = 1;
       this.fireTimer = weapon.fireRate;
       return;
     }
@@ -439,15 +379,13 @@ export class PlayerController {
     this.pitch += (weapon.recoilKick * 0.4) * (this.isCrouching ? 0.5 : 1.0);
     this.screenShake = weapon.recoilKick * 0.6;
 
-    if (this.slideMesh) {
-      this.slideMesh.position.z += 0.06;
-      setTimeout(() => { if (this.slideMesh) this.slideMesh.position.z = -0.05; }, 50);
+    this.slideKick = 1;
+    this.flashTimer = 0.05;
+    if (this.muzzleFlash) {
+      this.muzzleFlash.visible = true;
+      this.muzzleFlash.rotation.z = Math.random() * Math.PI * 2;
     }
-
-    if (this.muzzleLight) {
-      this.muzzleLight.intensity = 3.5;
-      setTimeout(() => { if (this.muzzleLight) this.muzzleLight.intensity = 0; }, 40);
-    }
+    if (this.muzzleLight) this.muzzleLight.intensity = 10;
 
     if (weapon.type === 'rifle') sounds.playRifleShot();
     else if (weapon.type === 'shotgun') sounds.playShotgunShot();
@@ -458,15 +396,22 @@ export class PlayerController {
     const gunRight = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
     this.particles.ejectCasing(gunWorldPos, gunRight);
 
+    const muzzle = this._muzzleWorld;
+    if (this.muzzleObject) this.muzzleObject.getWorldPosition(muzzle);
+    else muzzle.copy(gunWorldPos);
+    const aimDir = this.getCameraRay().direction;
+    this.particles.createMuzzleSmoke(muzzle, aimDir, weapon.type !== 'rifle');
+
     const pelletCount = weapon.type === 'shotgun' ? 8 : 1;
     for (let p = 0; p < pelletCount; p++) {
-      this.fireBallisticRay(weapon);
+      this.fireBallisticRay(weapon, muzzle, p < 3);
     }
 
     this.updateHUD();
   }
 
-  fireBallisticRay(weapon) {
+  // Closest hit among enemies, trees, terrain and the lake surface decides what the bullet strikes
+  fireBallisticRay(weapon, muzzle, showTracer = true) {
     const ray = this.getCameraRay();
     const spread = this.isADS ? weapon.spread * 0.3 : weapon.spread;
     ray.direction.x += (Math.random() - 0.5) * spread;
@@ -477,53 +422,74 @@ export class PlayerController {
     const raycaster = new THREE.Raycaster(ray.origin, ray.direction, 0.5, 300);
 
     const enemyMeshes = this.enemies.enemies.map(e => e.mesh);
-    const enemyHits = raycaster.intersectObjects(enemyMeshes, true);
+    const treeMeshes = this.world.trees.map(t => t.mesh);
+    const enemyHit = raycaster.intersectObjects(enemyMeshes, true)[0];
+    const treeHit = raycaster.intersectObjects(treeMeshes, true)[0];
+    const terrainHit = this.terrain.raycast(ray.origin, ray.direction, 300);
 
-    if (enemyHits.length > 0) {
-      const hit = enemyHits[0];
-      let root = hit.object;
+    let waterDist = Infinity;
+    if (ray.direction.y < -0.0001 && ray.origin.y > this.terrain.waterLevel) {
+      waterDist = (this.terrain.waterLevel - ray.origin.y) / ray.direction.y;
+    }
+
+    const candidates = [
+      { kind: 'enemy', distance: enemyHit ? enemyHit.distance : Infinity },
+      { kind: 'tree', distance: treeHit ? treeHit.distance : Infinity },
+      { kind: 'terrain', distance: terrainHit ? terrainHit.distance : Infinity },
+      { kind: 'water', distance: waterDist < 300 ? waterDist : Infinity }
+    ].sort((a, b) => a.distance - b.distance);
+    const first = candidates[0];
+
+    const worldNormal = (hit) => (hit.face
+      ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld)
+      : new THREE.Vector3(0, 1, 0));
+    const tracerTo = (point) => { if (showTracer) this.particles.createTracer(muzzle, point); };
+
+    if (first.distance === Infinity) {
+      tracerTo(ray.origin.clone().addScaledVector(ray.direction, 220));
+      return;
+    }
+
+    if (first.kind === 'enemy') {
+      let root = enemyHit.object;
       while (root.parent && !enemyMeshes.includes(root)) {
         root = root.parent;
       }
       const enemy = this.enemies.enemies.find(e => e.mesh === root);
       if (enemy) {
-        const isHeadshot = hit.point.y > (root.position.y + (enemy.type === 'behemoth' ? 3.5 : 1.5));
+        const isHeadshot = enemyHit.point.y > (root.position.y + (enemy.type === 'behemoth' ? 3.5 : 1.5));
         const finalDamage = isHeadshot ? weapon.damage * 2.0 : weapon.damage;
 
         this.enemies.damageEnemy(enemy, finalDamage);
-        this.particles.createImpact(hit.point, hit.face.normal, 'blood');
-        this.particles.createDamageNumber(hit.point, finalDamage, isHeadshot);
+        this.particles.createImpact(enemyHit.point, worldNormal(enemyHit), 'blood');
+        this.particles.createDamageNumber(enemyHit.point, finalDamage, isHeadshot);
         this.triggerHitMarker(isHeadshot);
-        return;
+        tracerTo(enemyHit.point);
       }
-    }
-
-    const treeMeshes = this.world.trees.map(t => t.mesh);
-    const treeHits = raycaster.intersectObjects(treeMeshes, true);
-    if (treeHits.length > 0) {
-      const hit = treeHits[0];
-      let root = hit.object;
+    } else if (first.kind === 'tree') {
+      let root = treeHit.object;
       while (root.parent && !treeMeshes.includes(root)) {
         root = root.parent;
       }
       const tree = this.world.trees.find(t => t.mesh === root);
       if (tree) {
-        this.world.damageTree(tree, weapon.damage, hit.point, ray.direction);
-        this.particles.createImpact(hit.point, hit.face.normal, 'wood');
-        return;
+        this.world.damageTree(tree, weapon.damage, treeHit.point, ray.direction);
+        this.particles.createImpact(treeHit.point, worldNormal(treeHit), 'wood');
+        tracerTo(treeHit.point);
       }
-    }
-
-    const terrainHits = raycaster.intersectObject(this.terrain.mesh);
-    if (terrainHits.length > 0) {
-      const hit = terrainHits[0];
-      this.particles.createTracer(ray.origin, hit.point);
-      this.particles.createImpact(hit.point, hit.face.normal, 'sparks');
+    } else if (first.kind === 'water') {
+      const splash = ray.origin.clone().addScaledVector(ray.direction, waterDist);
+      this.particles.createWaterSplash(splash, 0.55);
+      tracerTo(splash);
+    } else {
+      this.particles.createImpact(terrainHit.point, terrainHit.normal, 'sparks');
+      tracerTo(terrainHit.point);
     }
   }
 
   swingAxe() {
     sounds.playAxeChop();
+    this.meleeSwing = 1;
     this.recoilOffset.y = -0.15;
     this.recoilOffset.z = 0.2;
 
@@ -539,7 +505,7 @@ export class PlayerController {
       const tree = this.world.trees.find(t => t.mesh === root);
       if (tree) {
         this.world.damageTree(tree, 50, hit.point, ray.direction);
-        this.particles.createImpact(hit.point, hit.face.normal, 'wood');
+        this.particles.createImpact(hit.point, hit.face.normal.clone().transformDirection(hit.object.matrixWorld), 'wood');
         return;
       }
     }
@@ -553,7 +519,7 @@ export class PlayerController {
       const enemy = this.enemies.enemies.find(e => e.mesh === root);
       if (enemy) {
         this.enemies.damageEnemy(enemy, 60);
-        this.particles.createImpact(hit.point, hit.face.normal, 'blood');
+        this.particles.createImpact(hit.point, hit.face.normal.clone().transformDirection(hit.object.matrixWorld), 'blood');
         this.particles.createDamageNumber(hit.point, 60, false);
         this.triggerHitMarker(false);
       }
@@ -890,22 +856,53 @@ export class PlayerController {
       this.particles.createUnderwaterBubbles(this.position, 2);
     }
 
-    const targetFOV = this.isADS ? (this.weapons[this.currentSlot].type === 'sniper' ? 24 : 52) : 75;
+    const weaponType = this.weapons[this.currentSlot].type;
+    const targetFOV = this.isADS ? (weaponType === 'sniper' ? 24 : 52) : 75;
     this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, targetFOV, delta * 12);
     this.camera.updateProjectionMatrix();
 
-    if (this.weaponMesh && !this.isSwimming) {
-      const isRifleOrShotgun = ['rifle', 'shotgun', 'sniper'].includes(this.weapons[this.currentSlot].type);
-      const targetX = this.isADS && isRifleOrShotgun ? 0 : 0.24;
-      const targetY = this.isADS && isRifleOrShotgun ? -0.16 : -0.22;
-      const targetZ = this.isADS && isRifleOrShotgun ? -0.4 : -0.5;
+    // Sniper scope: hide the viewmodel and let the post-process pass draw the scope mask
+    this.scopeAmount = weaponType === 'sniper' ? THREE.MathUtils.clamp((58 - this.camera.fov) / 28, 0, 1) : 0;
+    this.weaponGroup.visible = !this.isSwimming && this.scopeAmount < 0.75;
 
-      const bobX = Math.cos(this.bobTimer * 0.5) * 0.012;
-      const bobY = Math.abs(Math.sin(this.bobTimer)) * 0.015;
+    // Muzzle flash / light decay
+    if (this.flashTimer > 0) {
+      this.flashTimer -= delta;
+      if (this.flashTimer <= 0) {
+        if (this.muzzleFlash) this.muzzleFlash.visible = false;
+        if (this.muzzleLight) this.muzzleLight.intensity = 0;
+      }
+    }
+
+    if (this.weaponMesh && !this.isSwimming) {
+      const isGun = ['rifle', 'shotgun', 'sniper'].includes(weaponType);
+      const aimed = this.isADS && isGun;
+      const rest = this.restPose;
+      const targetX = aimed ? 0 : rest[0];
+      const targetY = aimed ? -this.sightY : rest[1];
+      const targetZ = aimed ? -0.4 : rest[2];
+
+      const bobScale = aimed ? 0.25 : 1;
+      const bobX = Math.cos(this.bobTimer * 0.5) * 0.012 * bobScale;
+      const bobY = Math.abs(Math.sin(this.bobTimer)) * 0.015 * bobScale;
 
       this.weaponMesh.position.x = THREE.MathUtils.lerp(this.weaponMesh.position.x, targetX + bobX + this.swayOffset.x, delta * 15);
       this.weaponMesh.position.y = THREE.MathUtils.lerp(this.weaponMesh.position.y, targetY - bobY + this.swayOffset.y + this.recoilOffset.y, delta * 15);
       this.weaponMesh.position.z = THREE.MathUtils.lerp(this.weaponMesh.position.z, targetZ + this.recoilOffset.z, delta * 15);
+
+      // Muzzle climb + melee swing
+      const swing = this.meleeSwing > 0 ? Math.sin((1 - this.meleeSwing) * Math.PI) : 0;
+      this.weaponMesh.rotation.x = this.weaponRestRotation.x + this.recoilOffset.z * (isGun ? 1.8 : 0) - swing * 1.25;
+      this.weaponMesh.rotation.z = this.weaponRestRotation.z - swing * 0.35 + this.swayOffset.x * 1.5;
+      this.meleeSwing = Math.max(0, this.meleeSwing - delta * 3.6);
+
+      // Bolt / pump kick
+      if (this.slideMesh) {
+        this.slideKick = Math.max(0, this.slideKick - delta * (weaponType === 'shotgun' ? 4 : 18));
+        const kick = weaponType === 'shotgun' ? Math.sin(this.slideKick * Math.PI) : this.slideKick;
+        this.slideMesh.position.copy(this.slideRest);
+        this.slideMesh.position.z += kick * (weaponType === 'shotgun' ? 0.12 : 0.05);
+      }
 
       this.recoilOffset.lerp(new THREE.Vector3(0, 0, 0), delta * 12);
       this.swayOffset.lerp(new THREE.Vector2(0, 0), delta * 8);
@@ -973,7 +970,10 @@ export class PlayerController {
     let deg = (-this.yaw * (180 / Math.PI)) % 360;
     if (deg < 0) deg += 360;
 
-    const offsetPx = -(deg / 360) * 480;
+    // Tape holds three 360° loops of 24 ticks; park the middle loop's matching heading under the centre marker
+    const tickW = 30;
+    const loopW = 24 * tickW;
+    const offsetPx = 190 - tickW / 2 - (loopW + (deg / 360) * loopW);
     this.domCompassTape.style.transform = `translateX(${offsetPx}px)`;
 
     const radioTower = this.world.landmarks.find(l => l.isObjective);
@@ -1016,12 +1016,12 @@ export class PlayerController {
     }
 
     if (this.domFireMode) {
-      if (this.isSwimming) this.domFireMode.textContent = 'TREADING WATER &bull; [SPACE] SWIM UP &bull; [C] DIVE';
-      else if (weapon.type === 'rifle') this.domFireMode.textContent = 'FULL AUTO &bull; 5.56x45mm NATO &bull; [G] GRENADE';
-      else if (weapon.type === 'shotgun') this.domFireMode.textContent = 'PUMP ACTION &bull; 12-GAUGE BUCKSHOT &bull; [G] GRENADE';
-      else if (weapon.type === 'sniper') this.domFireMode.textContent = 'BOLT ACTION &bull; .338 LAPUA MAGNUM &bull; [G] GRENADE';
-      else if (weapon.type === 'hammer') this.domFireMode.textContent = 'CONSTRUCTION TOOL &bull; [SCROLL/Q] SELECT &bull; [B] CATALOG &bull; [R] ROTATE';
-      else if (weapon.type === 'axe') this.domFireMode.textContent = 'TACTICAL HATCHET &bull; FELL PINE TREES';
+      if (this.isSwimming) this.domFireMode.innerHTML = 'TREADING WATER &bull; [SPACE] SWIM UP &bull; [C] DIVE';
+      else if (weapon.type === 'rifle') this.domFireMode.innerHTML = 'FULL AUTO &bull; 5.56x45mm NATO &bull; [G] GRENADE';
+      else if (weapon.type === 'shotgun') this.domFireMode.innerHTML = 'PUMP ACTION &bull; 12-GAUGE BUCKSHOT &bull; [G] GRENADE';
+      else if (weapon.type === 'sniper') this.domFireMode.innerHTML = 'BOLT ACTION &bull; .338 LAPUA MAGNUM &bull; [G] GRENADE';
+      else if (weapon.type === 'hammer') this.domFireMode.innerHTML = 'CONSTRUCTION TOOL &bull; [SCROLL/Q] SELECT &bull; [B] CATALOG &bull; [R] ROTATE';
+      else if (weapon.type === 'axe') this.domFireMode.innerHTML = 'TACTICAL HATCHET &bull; FELL PINE TREES';
     }
   }
 }

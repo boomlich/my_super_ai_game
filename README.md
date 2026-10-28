@@ -19,6 +19,17 @@
 
 ---
 
+## Graphics
+
+- **Render pipeline**: HDR render with 4x MSAA, bloom, ACES tone mapping and a cinematic grade pass (vignette, chromatic aberration, film grain, damage flash, sniper-scope mask, underwater distortion). Run `http://localhost:5173/?quality=low` to turn the post-processing chain off on weaker GPUs.
+- **Sky & weather**: procedural sky dome with sun, moon, stars and animated clouds; dusk/dawn palettes, fog that tracks the horizon colour, rain streaks, overcast storms with lightning flashes.
+- **Terrain & water**: biome colouring by slope/height/shoreline with procedural detail and bump in the shader; GPU-animated waves with fresnel reflections, sun glitter, shoreline foam and lake-bed caustics.
+- **World**: faceted pine forests that sway in the wind, wind-animated instanced grass, flowers, boulders and undergrowth, a rebuilt base camp, bunker and lattice radio tower with a blinking beacon.
+- **Characters & weapons**: animated Forest Stalkers, PMC troopers and the Iron Behemoth with glowing details; first-person weapon models with gloved hands, muzzle flash, tracers and shell casings.
+- **FX**: pooled GPU particles (sparks, blood, smoke, fire, fireflies), explosion light flashes and procedural campfires.
+
+---
+
 ## Quick Start / How to Run
 
 1. Open a terminal in `c:\Dev\Repos\my_super_shooter`

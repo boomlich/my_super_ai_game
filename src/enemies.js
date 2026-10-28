@@ -1,6 +1,8 @@
 // ZONE ZERO: Valheim Enemy AI, Boss Mechanics & Spikes Trap Defense
 import * as THREE from 'three';
 import { sounds } from './audio.js';
+import { createStalker, createTrooper, createBehemoth, animateEnemy } from './characters.js';
+import { buildRockGeometry } from './models.js';
 
 export class EnemyManager {
   constructor(scene, terrain, survival, building, particles) {
@@ -12,6 +14,12 @@ export class EnemyManager {
 
     this.enemies = [];
     this.projectiles = [];
+    this.dying = [];
+    this.time = 0;
+
+    this.flashMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    this.boulderGeo = buildRockGeometry(11);
+    this.boulderMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 });
 
     this.raidActive = false;
     this.raidTimer = 0;
@@ -43,24 +51,7 @@ export class EnemyManager {
 
   spawnStalker(x, z) {
     const y = this.terrain.getHeightAt(x, z);
-    const group = new THREE.Group();
-
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(0.8, 0.7, 1.6),
-      new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.9 })
-    );
-    body.position.y = 0.8;
-    body.castShadow = true;
-    group.add(body);
-
-    const eyeMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
-    const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.08, 4, 4), eyeMat);
-    eyeL.position.set(-0.25, 1.1, 0.85);
-    const eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.08, 4, 4), eyeMat);
-    eyeR.position.set(0.25, 1.1, 0.85);
-    group.add(eyeL);
-    group.add(eyeR);
-
+    const group = createStalker();
     group.position.set(x, y, z);
     this.scene.add(group);
 
@@ -81,38 +72,7 @@ export class EnemyManager {
 
   spawnTrooper(x, z) {
     const y = this.terrain.getHeightAt(x, z);
-    const group = new THREE.Group();
-
-    const torso = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.35, 0.3, 1.2, 6),
-      new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8 })
-    );
-    torso.position.y = 1.1;
-    torso.castShadow = true;
-    group.add(torso);
-
-    const head = new THREE.Mesh(
-      new THREE.SphereGeometry(0.25, 6, 6),
-      new THREE.MeshStandardMaterial({ color: 0x475569 })
-    );
-    head.position.y = 1.85;
-    group.add(head);
-
-    const rifle = new THREE.Mesh(
-      new THREE.BoxGeometry(0.12, 0.15, 0.8),
-      new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.8 })
-    );
-    rifle.position.set(0.3, 1.1, 0.4);
-    group.add(rifle);
-
-    const laserMat = new THREE.LineBasicMaterial({ color: 0xff0000 });
-    const laserGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(0.3, 1.1, 0.8),
-      new THREE.Vector3(0.3, 1.1, 20.0)
-    ]);
-    const laser = new THREE.Line(laserGeo, laserMat);
-    group.add(laser);
-
+    const group = createTrooper();
     group.position.set(x, y, z);
     this.scene.add(group);
 
@@ -132,38 +92,7 @@ export class EnemyManager {
 
   spawnIronBehemoth(x, z) {
     const y = this.terrain.getHeightAt(x, z);
-    const group = new THREE.Group();
-
-    const torso = new THREE.Mesh(
-      new THREE.CylinderGeometry(1.3, 1.0, 3.2, 8),
-      new THREE.MeshStandardMaterial({ color: 0x1e3a8a, roughness: 0.9, metalness: 0.5 })
-    );
-    torso.position.y = 2.6;
-    torso.castShadow = true;
-    group.add(torso);
-
-    const head = new THREE.Mesh(
-      new THREE.BoxGeometry(1.0, 1.0, 1.0),
-      new THREE.MeshStandardMaterial({ color: 0x172554 })
-    );
-    head.position.y = 4.4;
-    group.add(head);
-
-    const eye = new THREE.Mesh(
-      new THREE.SphereGeometry(0.24, 6, 6),
-      new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
-    );
-    eye.position.set(0, 4.4, 0.55);
-    group.add(eye);
-
-    const club = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.45, 0.55, 4.2, 6),
-      new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.9 })
-    );
-    club.position.set(1.5, 2.4, 0.5);
-    club.rotation.x = Math.PI * 0.25;
-    group.add(club);
-
+    const group = createBehemoth();
     group.position.set(x, y, z);
     this.scene.add(group);
 
@@ -243,7 +172,7 @@ export class EnemyManager {
     }
 
     if (enemy.mesh) {
-      const flashMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      const flashMat = this.flashMat;
       enemy.mesh.traverse(child => {
         if (child.isMesh && !child.origMat) {
           child.origMat = child.material;
@@ -270,6 +199,8 @@ export class EnemyManager {
   }
 
   killEnemy(enemy) {
+    if (enemy.dead) return;
+    enemy.dead = true;
     sounds.playMonsterGrowl(enemy.type === 'behemoth');
 
     if (enemy.type === 'behemoth') {
@@ -284,11 +215,56 @@ export class EnemyManager {
       }
     }
 
-    this.scene.remove(enemy.mesh);
+    // Hand the corpse to the death animation instead of deleting it instantly
+    const big = enemy.type === 'behemoth';
+    const p = enemy.mesh.position;
+    this.particles.createImpact(new THREE.Vector3(p.x, p.y + (big ? 3 : 1), p.z), new THREE.Vector3(0, 1, 0), 'blood');
+    for (let i = 0; i < (big ? 18 : 6); i++) {
+      this.particles.spawn({
+        x: p.x + (Math.random() - 0.5) * (big ? 3 : 1), y: p.y + 0.2, z: p.z + (Math.random() - 0.5) * (big ? 3 : 1),
+        vx: (Math.random() - 0.5) * 1.5, vy: 0.4 + Math.random(), vz: (Math.random() - 0.5) * 1.5,
+        life: 1.2 + Math.random() * 0.8, size0: big ? 1.0 : 0.4, size1: big ? 4.0 : 1.6,
+        color: 0x6a6258, alpha: 0.35, drag: 1.2, fadeIn: 0.1
+      });
+    }
+    this.dying.push({
+      mesh: enemy.mesh,
+      t: 0,
+      tiltAxis: Math.random() < 0.5 ? 1 : -1,
+      big
+    });
     this.enemies = this.enemies.filter(e => e !== enemy);
   }
 
+  // Enemy models own their geometry and materials, so free the GPU memory once a corpse is gone
+  disposeModel(root) {
+    root.traverse((child) => {
+      child.geometry?.dispose();
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      for (const m of mats) if (m && m !== this.flashMat) m.dispose();
+    });
+  }
+
+  updateDying(delta) {
+    for (let i = this.dying.length - 1; i >= 0; i--) {
+      const d = this.dying[i];
+      d.t += delta;
+      const fall = Math.min(1, d.t / (d.big ? 1.1 : 0.45));
+      const eased = 1 - Math.pow(1 - fall, 3);
+      d.mesh.rotation.z = d.tiltAxis * eased * Math.PI * 0.5;
+      if (d.t > 2.0) d.mesh.position.y -= delta * (d.big ? 1.6 : 0.9);
+      if (d.t > 3.2) {
+        this.scene.remove(d.mesh);
+        this.disposeModel(d.mesh);
+        this.dying.splice(i, 1);
+      }
+    }
+  }
+
   update(delta, playerPos, worldStructures) {
+    this.time += delta;
+    this.updateDying(delta);
+
     if (!this.raidActive) {
       this.timeUntilNextRaid -= delta;
       if (this.timeUntilNextRaid <= 0) {
@@ -307,6 +283,12 @@ export class EnemyManager {
       p.vel.y -= 14.0 * delta;
       p.mesh.position.addScaledVector(p.vel, delta);
       p.mesh.rotation.x += 4.0 * delta;
+      p.mesh.rotation.z += 2.5 * delta;
+      this.particles.spawn({
+        x: p.mesh.position.x, y: p.mesh.position.y, z: p.mesh.position.z,
+        vx: (Math.random() - 0.5) * 0.4, vy: 0.2, vz: (Math.random() - 0.5) * 0.4,
+        life: 0.8, size0: 0.3, size1: 1.0, color: 0x6a6258, alpha: 0.3, drag: 1.5, fadeIn: 0.1
+      });
 
       const groundY = this.terrain.getHeightAt(p.mesh.position.x, p.mesh.position.z);
       if (p.mesh.position.y <= groundY + 0.5) {
@@ -334,6 +316,10 @@ export class EnemyManager {
     for (const enemy of this.enemies) {
       const pos = enemy.mesh.position;
       const distToPlayer = pos.distanceTo(playerPos);
+      if (enemy.prevX === undefined) {
+        enemy.prevX = pos.x;
+        enemy.prevZ = pos.z;
+      }
 
       // Check defensive metal spikes trap damage!
       if (worldStructures) {
@@ -413,15 +399,20 @@ export class EnemyManager {
       }
 
       pos.y = this.terrain.getHeightAt(pos.x, pos.z);
+
+      const moved = Math.hypot(pos.x - enemy.prevX, pos.z - enemy.prevZ);
+      enemy.prevX = pos.x;
+      enemy.prevZ = pos.z;
+      animateEnemy(enemy, delta, delta > 0 ? moved / delta : 0, this.time);
     }
   }
 
   hurlBoulder(fromPos, toPos) {
     sounds.playMonsterGrowl(true);
 
-    const bGeo = new THREE.DodecahedronGeometry(0.8, 1);
-    const bMat = new THREE.MeshStandardMaterial({ color: 0x57534e, roughness: 0.9 });
-    const bMesh = new THREE.Mesh(bGeo, bMat);
+    const bMesh = new THREE.Mesh(this.boulderGeo, this.boulderMat);
+    bMesh.castShadow = true;
+    bMesh.scale.setScalar(0.85);
     bMesh.position.set(fromPos.x, fromPos.y + 4.0, fromPos.z);
     this.scene.add(bMesh);
 

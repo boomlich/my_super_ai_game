@@ -1,6 +1,7 @@
 // ZONE ZERO: Valheim Modular Construction & Structural Physics System (Enhanced Selection)
 import * as THREE from 'three';
 import { sounds } from './audio.js';
+import { buildStructure } from './structures.js';
 
 export const BUILD_RECIPES = {
   campfire: {
@@ -125,9 +126,15 @@ export class BuildingSystem {
     this.structures = [];
     this.ghostMesh = null;
 
-    this.ghostFoundationMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, wireframe: true, transparent: true, opacity: 0.7 });
-    this.ghostSupportedMat = new THREE.MeshBasicMaterial({ color: 0x22c55e, wireframe: true, transparent: true, opacity: 0.7 });
-    this.ghostInvalidMat = new THREE.MeshBasicMaterial({ color: 0xef4444, wireframe: true, transparent: true, opacity: 0.7 });
+    const ghostMat = (color) => {
+      const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.42, depthWrite: false });
+      mat.color.multiplyScalar(1.6);
+      return mat;
+    };
+    this.ghostFoundationMat = ghostMat(0x38bdf8);
+    this.ghostSupportedMat = ghostMat(0x22c55e);
+    this.ghostInvalidMat = ghostMat(0xef4444);
+    this.ghostMaterial = this.ghostFoundationMat;
 
     this.domBuildMenu = document.getElementById('build-menu');
     this.domModal = document.getElementById('blueprint-modal');
@@ -277,26 +284,26 @@ export class BuildingSystem {
   createGhostMesh() {
     if (this.ghostMesh) {
       this.scene.remove(this.ghostMesh);
-      if (this.ghostMesh.geometry) this.ghostMesh.geometry.dispose();
     }
 
     const recipe = BUILD_RECIPES[this.selectedPieceKey];
     if (!recipe) return;
 
-    let geo;
-    if (recipe.id === 'wood_roof') {
-      geo = new THREE.ConeGeometry(2.2, 1.2, 4);
-    } else if (recipe.id === 'campfire') {
-      geo = new THREE.CylinderGeometry(0.8, 0.9, 0.4, 8);
-    } else if (recipe.id === 'wood_stairs') {
-      geo = new THREE.BoxGeometry(recipe.size[0], recipe.size[1], recipe.size[2]);
-    } else {
-      geo = new THREE.BoxGeometry(recipe.size[0], recipe.size[1], recipe.size[2]);
-    }
-
-    this.ghostMesh = new THREE.Mesh(geo, this.ghostFoundationMat);
+    this.ghostMesh = buildStructure(recipe, { forGhost: true });
     this.ghostMesh.visible = this.active;
+    this.setGhostMaterial(this.ghostMaterial);
     this.scene.add(this.ghostMesh);
+  }
+
+  setGhostMaterial(mat) {
+    this.ghostMaterial = mat;
+    this.ghostMesh?.traverse((child) => {
+      if (child.isMesh) {
+        child.material = mat;
+        child.castShadow = false;
+        child.receiveShadow = false;
+      }
+    });
   }
 
   canAfford(recipe) {
@@ -362,11 +369,8 @@ export class BuildingSystem {
     this.ghostMesh.rotation.y = this.rotationY;
 
     const affordable = this.canAfford(recipe);
-    if (!affordable) {
-      this.ghostMesh.material = this.ghostInvalidMat;
-    } else {
-      this.ghostMesh.material = isFoundation ? this.ghostFoundationMat : this.ghostSupportedMat;
-    }
+    const wanted = !affordable ? this.ghostInvalidMat : (isFoundation ? this.ghostFoundationMat : this.ghostSupportedMat);
+    if (wanted !== this.ghostMaterial) this.setGhostMaterial(wanted);
   }
 
   placePiece() {
@@ -392,74 +396,9 @@ export class BuildingSystem {
   }
 
   instantiateStructure(recipe, position, rotY) {
-    let geo;
-    if (recipe.id === 'wood_roof') {
-      geo = new THREE.ConeGeometry(2.2, 1.2, 4);
-    } else if (recipe.id === 'campfire') {
-      geo = new THREE.CylinderGeometry(0.8, 0.9, 0.4, 8);
-    } else if (recipe.id === 'wood_stairs') {
-      geo = new THREE.BoxGeometry(recipe.size[0], recipe.size[1], recipe.size[2]);
-      geo.rotateX(-Math.PI * 0.2);
-    } else {
-      geo = new THREE.BoxGeometry(recipe.size[0], recipe.size[1], recipe.size[2]);
-    }
-
-    const mat = new THREE.MeshStandardMaterial({
-      color: recipe.color,
-      roughness: 0.8,
-      metalness: 0.1,
-      flatShading: true
-    });
-
-    const mesh = new THREE.Mesh(geo, mat);
+    const mesh = buildStructure(recipe);
     mesh.position.copy(position);
     mesh.rotation.y = rotY;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-
-    if (recipe.id === 'campfire') {
-      const fireLight = new THREE.PointLight(0xf97316, 2.5, 14);
-      fireLight.position.set(0, 0.5, 0);
-      mesh.add(fireLight);
-
-      const core = new THREE.Mesh(
-        new THREE.DodecahedronGeometry(0.3, 1),
-        new THREE.MeshBasicMaterial({ color: 0xffedd5 })
-      );
-      core.position.y = 0.2;
-      mesh.add(core);
-
-      const spit = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.04, 0.04, 1.4, 4),
-        new THREE.MeshStandardMaterial({ color: 0x334155 })
-      );
-      spit.rotation.z = Math.PI * 0.5;
-      spit.position.y = 0.6;
-      mesh.add(spit);
-    } else if (recipe.id === 'wood_window') {
-      const windowHole = new THREE.Mesh(
-        new THREE.BoxGeometry(1.2, 0.7, 0.5),
-        new THREE.MeshBasicMaterial({ color: 0x020617 })
-      );
-      mesh.add(windowHole);
-    } else if (recipe.id === 'wood_door') {
-      const knob = new THREE.Mesh(
-        new THREE.SphereGeometry(0.08, 4, 4),
-        new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.9 })
-      );
-      knob.position.set(0.6, 0, 0.2);
-      mesh.add(knob);
-    } else if (recipe.id === 'metal_spikes') {
-      for (let s = -1; s <= 1; s++) {
-        const spike = new THREE.Mesh(
-          new THREE.ConeGeometry(0.12, 1.2, 4),
-          new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.8 })
-        );
-        spike.position.set(s * 0.7, 0.5, 0);
-        spike.rotation.x = Math.PI * 0.15;
-        mesh.add(spike);
-      }
-    }
 
     return {
       type: recipe.id,
