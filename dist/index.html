@@ -1,0 +1,1373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>ZONE ZERO: Outpost Valheim - Modern Survival Shooter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Teko:wght@500;600;700&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      margin: 0;
+      padding: 0;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #05080c;
+      font-family: 'Rajdhani', sans-serif;
+      color: #e2e8f0;
+    }
+    #game-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      z-index: 1;
+    }
+    #hud-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 1.5rem;
+    }
+
+    /* In-game HUD Toast Notification (Replaces blocking alert popups) */
+    #hud-toast {
+      position: absolute;
+      top: 85px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.95);
+      border: 1.5px solid #38bdf8;
+      padding: 10px 24px;
+      border-radius: 6px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 14px;
+      color: #f8fafc;
+      z-index: 100;
+      display: none;
+      box-shadow: 0 0 25px rgba(56, 189, 248, 0.4);
+      pointer-events: none;
+      text-align: center;
+      letter-spacing: 1px;
+      animation: fadeInToast 0.25s ease-out;
+    }
+    #hud-toast.warning { border-color: #f59e0b; color: #fef08a; box-shadow: 0 0 25px rgba(245, 158, 11, 0.4); }
+    #hud-toast.danger { border-color: #ef4444; color: #fca5a5; box-shadow: 0 0 25px rgba(239, 68, 68, 0.5); }
+    #hud-toast.success { border-color: #22c55e; color: #86efac; box-shadow: 0 0 25px rgba(34, 197, 94, 0.5); }
+
+    @keyframes fadeInToast {
+      from { opacity: 0; transform: translate(-50%, -10px); }
+      to { opacity: 1; transform: translate(-50%, 0); }
+    }
+
+    /* Top Bar: Compass, Time, Radar & Status Buffs */
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      width: 100%;
+    }
+    .compass-container {
+      position: absolute;
+      top: 1rem;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 380px;
+      height: 40px;
+      background: rgba(10, 15, 20, 0.75);
+      border: 1px solid rgba(80, 150, 120, 0.3);
+      border-radius: 4px;
+      overflow: hidden;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+    }
+    .compass-tape {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      transition: transform 0.05s linear;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 13px;
+      color: #94a3b8;
+      white-space: nowrap;
+    }
+    .compass-tick {
+      display: inline-block;
+      width: 20px;
+      text-align: center;
+    }
+    .compass-major {
+      color: #38bdf8;
+      font-weight: bold;
+    }
+    .compass-indicator {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 2px;
+      height: 100%;
+      background: #ef4444;
+      box-shadow: 0 0 6px #ef4444;
+    }
+    .compass-objective {
+      position: absolute;
+      bottom: 2px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px;
+      color: #fbbf24;
+      letter-spacing: 1px;
+    }
+
+    /* Radar / Minimap */
+    .radar-container {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+    }
+    #radar-canvas {
+      width: 110px;
+      height: 110px;
+      border-radius: 50%;
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.25);
+    }
+
+    .time-status {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background: rgba(10, 15, 20, 0.75);
+      padding: 8px 14px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      backdrop-filter: blur(4px);
+    }
+    .time-val {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 16px;
+      color: #38bdf8;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .biome-tag {
+      font-family: 'Teko', sans-serif;
+      font-size: 20px;
+      letter-spacing: 2px;
+      color: #4ade80;
+      text-transform: uppercase;
+      line-height: 1;
+    }
+
+    /* Valheim Status Effects */
+    .status-effects {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: flex-end;
+    }
+    .effect-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+    .effect-badge.rested {
+      border-color: #38bdf8;
+      color: #38bdf8;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+    }
+    .effect-badge.shelter {
+      border-color: #f59e0b;
+      color: #f59e0b;
+    }
+    .effect-badge.cold {
+      border-color: #60a5fa;
+      color: #93c5fd;
+    }
+    .effect-badge.wet {
+      border-color: #06b6d4;
+      color: #67e8f9;
+    }
+
+    /* Boss Health Bar */
+    #boss-bar-container {
+      position: absolute;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 440px;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      z-index: 20;
+    }
+    .boss-name {
+      font-family: 'Teko', sans-serif;
+      font-size: 22px;
+      letter-spacing: 3px;
+      color: #f87171;
+      text-transform: uppercase;
+      text-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+    }
+    .boss-track {
+      width: 100%;
+      height: 12px;
+      background: rgba(15, 23, 42, 0.9);
+      border: 1.5px solid #ef4444;
+      border-radius: 3px;
+      overflow: hidden;
+      box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
+    }
+    .boss-fill {
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(90deg, #b91c1c, #ef4444);
+      transition: width 0.1s linear;
+    }
+
+    /* Crosshair */
+    #crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 15;
+    }
+    .crosshair-line {
+      position: absolute;
+      background: rgba(240, 248, 255, 0.85);
+      box-shadow: 0 0 3px rgba(0,0,0,0.8);
+    }
+    .ch-top { width: 2px; height: 10px; top: -16px; left: -1px; }
+    .ch-bottom { width: 2px; height: 10px; bottom: -16px; left: -1px; }
+    .ch-left { height: 2px; width: 10px; left: -16px; top: -1px; }
+    .ch-right { height: 2px; width: 10px; right: -16px; top: -1px; }
+    .ch-dot { width: 3px; height: 3px; background: #38bdf8; border-radius: 50%; position: absolute; top: -1.5px; left: -1.5px; }
+
+    /* Hit Marker */
+    #hit-marker {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0.8);
+      width: 24px;
+      height: 24px;
+      pointer-events: none;
+      z-index: 16;
+      opacity: 0;
+      transition: opacity 0.05s ease-out, transform 0.08s ease-out;
+    }
+    .hm-slash1, .hm-slash2 {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 20px;
+      height: 2px;
+      background: #ef4444;
+      box-shadow: 0 0 5px #ef4444;
+    }
+    .hm-slash1 { transform: translate(-50%, -50%) rotate(45deg); }
+    .hm-slash2 { transform: translate(-50%, -50%) rotate(-45deg); }
+
+    /* Interaction Prompt */
+    #interact-prompt {
+      position: absolute;
+      top: 58%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(10, 15, 22, 0.9);
+      border: 1px solid rgba(56, 189, 248, 0.5);
+      padding: 6px 18px;
+      border-radius: 4px;
+      font-size: 14px;
+      font-family: 'Share Tech Mono', monospace;
+      color: #e2e8f0;
+      display: none;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.7);
+      pointer-events: none;
+    }
+    .key-btn {
+      background: #38bdf8;
+      color: #0f172a;
+      font-weight: bold;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 12px;
+    }
+
+    /* Raid Banner */
+    #raid-banner {
+      position: absolute;
+      top: 18%;
+      left: 50%;
+      transform: translateX(-50%) scale(0.9);
+      background: linear-gradient(90deg, transparent, rgba(185, 28, 28, 0.85) 20%, rgba(185, 28, 28, 0.85) 80%, transparent);
+      padding: 12px 60px;
+      text-align: center;
+      display: none;
+      z-index: 25;
+      pointer-events: none;
+      animation: pulseRaid 1.5s infinite alternate;
+    }
+    .raid-title {
+      font-family: 'Teko', sans-serif;
+      font-size: 38px;
+      letter-spacing: 4px;
+      color: #fef08a;
+      text-shadow: 0 0 15px rgba(254, 240, 138, 0.6);
+      text-transform: uppercase;
+      line-height: 1;
+    }
+    .raid-subtitle {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 14px;
+      letter-spacing: 2px;
+      color: #fca5a5;
+    }
+
+    /* Valheim Construction Radial/Bar */
+    #build-menu {
+      position: absolute;
+      bottom: 115px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(10, 15, 25, 0.95);
+      border: 1.5px solid rgba(56, 189, 248, 0.5);
+      border-radius: 8px;
+      padding: 10px 14px;
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.85);
+      pointer-events: auto;
+      backdrop-filter: blur(8px);
+      max-width: 95vw;
+      z-index: 30;
+    }
+    .build-header-hint {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      color: #94a3b8;
+      letter-spacing: 0.5px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      text-transform: uppercase;
+      gap: 8px;
+      white-space: nowrap;
+    }
+    .build-header-hint .highlight {
+      color: #38bdf8;
+      font-weight: bold;
+    }
+    .build-category {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .build-item-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      background: rgba(30, 41, 59, 0.85);
+      border: 1.5px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+      min-width: 68px;
+      transition: all 0.15s ease;
+    }
+    .build-item-btn:hover, .build-item-btn.active {
+      border-color: #38bdf8;
+      background: rgba(56, 189, 248, 0.25);
+      transform: translateY(-2px);
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.35);
+    }
+    .build-icon { font-size: 20px; }
+    .build-name {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #e2e8f0;
+      white-space: nowrap;
+    }
+    .build-cost {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 9px;
+      color: #94a3b8;
+    }
+
+    /* Underwater Tint & Atmospheric Distortion */
+    #underwater-tint {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 6;
+      background: radial-gradient(circle at center, rgba(6, 182, 212, 0.4) 0%, rgba(14, 116, 144, 0.72) 65%, rgba(4, 47, 46, 0.95) 100%);
+      opacity: 0;
+      transition: opacity 0.25s ease-out;
+      backdrop-filter: blur(1.5px);
+    }
+
+    /* Blueprint Catalog Modal */
+    #blueprint-modal {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(5, 8, 12, 0.88);
+      backdrop-filter: blur(10px);
+      z-index: 60;
+      display: none;
+      justify-content: center;
+      align-items: center;
+      pointer-events: auto;
+    }
+    .blueprint-window {
+      background: #0f172a;
+      border: 1px solid rgba(56, 189, 248, 0.5);
+      border-radius: 8px;
+      width: 860px;
+      max-width: 95vw;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.9);
+      overflow: hidden;
+    }
+    .blueprint-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 20px;
+      background: #1e293b;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .blueprint-title {
+      font-family: 'Teko', sans-serif;
+      font-size: 26px;
+      letter-spacing: 2px;
+      color: #38bdf8;
+      text-transform: uppercase;
+    }
+    .blueprint-close-btn {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      font-size: 28px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0 8px;
+    }
+    .blueprint-close-btn:hover {
+      color: #ef4444;
+    }
+    .blueprint-hint {
+      padding: 8px 20px;
+      background: rgba(30, 41, 59, 0.5);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 12px;
+      color: #94a3b8;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .blueprint-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      padding: 20px;
+      overflow-y: auto;
+    }
+    .blueprint-card {
+      background: rgba(30, 41, 59, 0.7);
+      border: 1.5px solid rgba(100, 116, 139, 0.3);
+      border-radius: 6px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .blueprint-card:hover {
+      border-color: #38bdf8;
+      background: rgba(56, 189, 248, 0.15);
+      transform: translateY(-2px);
+    }
+    .blueprint-card.selected {
+      border-color: #38bdf8;
+      background: rgba(56, 189, 248, 0.25);
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.4);
+    }
+
+    /* Bottom HUD */
+    .bottom-hud {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      width: 100%;
+    }
+
+    .survival-vitals {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .food-stomach {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(10, 15, 22, 0.7);
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      width: fit-content;
+    }
+    .stomach-label {
+      font-size: 11px;
+      font-family: 'Share Tech Mono', monospace;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-right: 2px;
+    }
+    .food-slot {
+      width: 44px;
+      height: 44px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1.5px solid rgba(100, 116, 139, 0.4);
+      border-radius: 4px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
+    .food-slot.active {
+      border-color: #f59e0b;
+      box-shadow: 0 0 8px rgba(245, 158, 11, 0.3);
+    }
+    .food-slot-icon { font-size: 20px; line-height: 1; }
+    .food-timer-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      height: 3px;
+      background: #f59e0b;
+      width: 100%;
+    }
+
+    .bars-container {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .bar-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .bar-icon {
+      width: 20px;
+      font-size: 15px;
+      font-weight: bold;
+      text-align: center;
+    }
+    .bar-track {
+      height: 16px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 3px;
+      position: relative;
+      overflow: hidden;
+      min-width: 180px;
+      transition: width 0.3s ease;
+      box-shadow: inset 0 1px 3px rgba(0,0,0,0.6);
+    }
+    .bar-fill { height: 100%; transition: width 0.15s ease-out; }
+    .health-fill {
+      background: linear-gradient(90deg, #b91c1c, #ef4444);
+      box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+    }
+    .stamina-fill {
+      background: linear-gradient(90deg, #d97706, #fbbf24);
+      box-shadow: 0 0 10px rgba(251, 191, 36, 0.5);
+    }
+    .bar-text {
+      position: absolute;
+      top: 50%;
+      left: 8px;
+      transform: translateY(-50%);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      color: #fff;
+      font-weight: bold;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+      letter-spacing: 0.5px;
+    }
+
+    /* Hotbar */
+    .hotbar-container {
+      display: flex;
+      gap: 8px;
+      background: rgba(10, 15, 22, 0.75);
+      padding: 6px 12px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      backdrop-filter: blur(5px);
+    }
+    .hotbar-slot {
+      width: 52px;
+      height: 52px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1.5px solid rgba(100, 116, 139, 0.3);
+      border-radius: 4px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+    }
+    .hotbar-slot.selected {
+      border-color: #38bdf8;
+      background: rgba(56, 189, 248, 0.15);
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.4);
+      transform: translateY(-4px);
+    }
+    .hotbar-num {
+      position: absolute;
+      top: 2px;
+      left: 4px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px;
+      color: #94a3b8;
+    }
+    .hotbar-icon { font-size: 22px; }
+    .hotbar-count {
+      position: absolute;
+      bottom: 2px;
+      right: 4px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      color: #e2e8f0;
+      font-weight: bold;
+    }
+
+    /* Right Weapon HUD */
+    .weapon-hud {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+      background: rgba(10, 15, 22, 0.75);
+      padding: 10px 16px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      backdrop-filter: blur(5px);
+    }
+    .weapon-name {
+      font-family: 'Teko', sans-serif;
+      font-size: 24px;
+      letter-spacing: 2px;
+      color: #f8fafc;
+      text-transform: uppercase;
+      line-height: 1;
+    }
+    .ammo-display {
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+    }
+    .ammo-clip {
+      font-family: 'Teko', sans-serif;
+      font-size: 44px;
+      line-height: 1;
+      font-weight: 700;
+      color: #38bdf8;
+    }
+    .ammo-clip.low {
+      color: #ef4444;
+      animation: pulseRaid 0.8s infinite alternate;
+    }
+    .ammo-slash { font-size: 22px; color: #64748b; }
+    .ammo-reserve {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 18px;
+      color: #94a3b8;
+    }
+    .fire-mode {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 1px;
+      color: #4ade80;
+      text-transform: uppercase;
+    }
+
+    /* Keybind discovery bar */
+    .keybind-bar {
+      position: absolute;
+      bottom: 4px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      color: #64748b;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .keybind-bar span { color: #94a3b8; }
+
+    /* Inventory Modal */
+    #inventory-modal {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(5, 8, 12, 0.88);
+      backdrop-filter: blur(8px);
+      z-index: 50;
+      display: none;
+      justify-content: center;
+      align-items: center;
+      pointer-events: auto;
+    }
+    .inventory-window {
+      background: #0f172a;
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      border-radius: 8px;
+      width: 900px;
+      max-width: 95vw;
+      height: 580px;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.9);
+      overflow: hidden;
+    }
+    .inv-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 20px;
+      background: #1e293b;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .inv-title {
+      font-family: 'Teko', sans-serif;
+      font-size: 26px;
+      letter-spacing: 2px;
+      color: #38bdf8;
+      text-transform: uppercase;
+    }
+    .inv-weight {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 14px;
+      color: #cbd5e1;
+    }
+    .inv-body {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    .inv-section-left {
+      flex: 1.2;
+      padding: 16px;
+      border-right: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+    }
+    .inv-section-right {
+      flex: 1;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: rgba(15, 23, 42, 0.6);
+      overflow-y: auto;
+    }
+    .section-title {
+      font-family: 'Teko', sans-serif;
+      font-size: 20px;
+      letter-spacing: 1.5px;
+      color: #94a3b8;
+      text-transform: uppercase;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      padding-bottom: 4px;
+    }
+    .grid-container {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+    }
+    .inv-slot {
+      aspect-ratio: 1;
+      background: rgba(30, 41, 59, 0.7);
+      border: 1px solid rgba(100, 116, 139, 0.3);
+      border-radius: 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      padding: 4px;
+    }
+    .inv-slot:hover {
+      border-color: #38bdf8;
+      background: rgba(56, 189, 248, 0.15);
+    }
+    .inv-slot-icon { font-size: 24px; }
+    .inv-slot-name {
+      font-size: 9px;
+      text-align: center;
+      color: #cbd5e1;
+      margin-top: 2px;
+      line-height: 1.1;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .inv-slot-qty {
+      position: absolute;
+      top: 2px;
+      right: 4px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      font-weight: bold;
+      color: #f8fafc;
+    }
+
+    .craft-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      overflow-y: auto;
+      max-height: 420px;
+      padding-right: 4px;
+    }
+    .craft-card {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(30, 41, 59, 0.5);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 6px;
+      padding: 10px 12px;
+      transition: all 0.15s ease;
+    }
+    .craft-card:hover {
+      background: rgba(30, 41, 59, 0.9);
+      border-color: #38bdf8;
+    }
+    .craft-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .craft-details {
+      display: flex;
+      flex-direction: column;
+    }
+    .craft-item-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+    .craft-reqs {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+    .craft-btn {
+      background: #0284c7;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 14px;
+      font-family: 'Rajdhani', sans-serif;
+      font-weight: bold;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      cursor: pointer;
+    }
+    .craft-btn:hover:not(:disabled) {
+      background: #38bdf8;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+    }
+    .craft-btn:disabled {
+      background: #334155;
+      color: #64748b;
+      cursor: not-allowed;
+    }
+
+    /* Start / Deploy Modal */
+    #start-screen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at center, rgba(15, 23, 42, 0.85) 0%, rgba(5, 8, 12, 0.98) 100%);
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 2rem;
+      backdrop-filter: blur(10px);
+    }
+    .title-banner {
+      font-family: 'Teko', sans-serif;
+      font-size: 72px;
+      font-weight: 700;
+      letter-spacing: 6px;
+      color: #f8fafc;
+      text-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
+      margin-bottom: 0;
+      line-height: 1;
+      text-align: center;
+    }
+    .subtitle-banner {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 18px;
+      letter-spacing: 3px;
+      color: #38bdf8;
+      text-transform: uppercase;
+      margin-bottom: 2rem;
+      text-align: center;
+    }
+    .briefing-box {
+      max-width: 680px;
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    .briefing-row {
+      margin-bottom: 12px;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .briefing-tag {
+      background: #0369a1;
+      color: #fff;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 3px;
+      white-space: nowrap;
+      text-transform: uppercase;
+    }
+    .deploy-btn {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      color: #fff;
+      border: 1px solid #38bdf8;
+      border-radius: 6px;
+      padding: 14px 48px;
+      font-family: 'Teko', sans-serif;
+      font-size: 28px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      cursor: pointer;
+      box-shadow: 0 0 20px rgba(37, 99, 235, 0.5);
+      transition: all 0.2s ease;
+    }
+    .deploy-btn:hover {
+      background: linear-gradient(135deg, #38bdf8, #3b82f6);
+      transform: scale(1.04);
+      box-shadow: 0 0 30px rgba(56, 189, 248, 0.8);
+    }
+
+    #damage-vignette {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 8;
+      box-shadow: inset 0 0 80px rgba(239, 68, 68, 0);
+      transition: box-shadow 0.2s ease-out;
+    }
+
+    @keyframes pulseRaid {
+      0% { opacity: 0.8; transform: translateX(-50%) scale(0.98); }
+      100% { opacity: 1; transform: translateX(-50%) scale(1.02); }
+    }
+  </style>
+  <script type="module" crossorigin src="/assets/index-D_Wusbd6.js"></script>
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+  <div id="damage-vignette"></div>
+  <div id="underwater-tint"></div>
+
+  <!-- Tactical HUD Toast Notification -->
+  <div id="hud-toast"></div>
+
+  <!-- Tactical HUD Overlay -->
+  <div id="hud-overlay">
+    <!-- Top Bar -->
+    <div class="top-bar">
+      <div class="time-status">
+        <div class="biome-tag" id="biome-display">BLACK FOREST BORDER</div>
+        <div class="time-val">
+          <span id="time-icon">☀️</span>
+          <span id="day-counter">DAY 1</span> &bull; <span id="time-counter">08:00</span>
+        </div>
+      </div>
+
+      <div class="compass-container">
+        <div class="compass-tape" id="compass-tape"></div>
+        <div class="compass-indicator"></div>
+        <div class="compass-objective" id="compass-objective">OBJ: RADIO RELAY (340m NW)</div>
+      </div>
+
+      <!-- Tactical Minimap Radar & Status Buffs -->
+      <div class="radar-container">
+        <canvas id="radar-canvas" width="110" height="110"></canvas>
+        <div class="status-effects" id="status-effects">
+          <div class="effect-badge rested" id="badge-rested" style="display: none;">
+            <span>⚡ RESTED (COMFORT <span id="comfort-level">3</span>)</span>
+          </div>
+          <div class="effect-badge shelter" id="badge-shelter" style="display: none;">
+            <span>🏠 SHELTERED</span>
+          </div>
+          <div class="effect-badge cold" id="badge-cold" style="display: none;">
+            <span>❄️ FREEZING (-30% STAMINA)</span>
+          </div>
+          <div class="effect-badge wet" id="badge-wet" style="display: none;">
+            <span>💧 WET (-20% STAMINA)</span>
+          </div>
+          <div class="effect-badge wet" id="badge-swimming" style="display: none;">
+            <span>🏊 SWIMMING</span>
+          </div>
+          <div class="effect-badge wet" id="badge-underwater" style="display: none;">
+            <span>🌊 UNDERWATER (DIVING)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- The Iron Behemoth Boss Bar -->
+    <div id="boss-bar-container">
+      <div class="boss-name" id="boss-name-label">THE IRON BEHEMOTH &bull; CYBERNETIC TITAN</div>
+      <div class="boss-track">
+        <div class="boss-fill" id="boss-hp-fill"></div>
+      </div>
+    </div>
+
+    <!-- Center Reticle & Feedback -->
+    <div id="crosshair">
+      <div class="crosshair-line ch-top"></div>
+      <div class="crosshair-line ch-bottom"></div>
+      <div class="crosshair-line ch-left"></div>
+      <div class="crosshair-line ch-right"></div>
+      <div class="ch-dot"></div>
+    </div>
+
+    <div id="hit-marker">
+      <div class="hm-slash1"></div>
+      <div class="hm-slash2"></div>
+    </div>
+
+    <div id="interact-prompt">
+      <span class="key-btn">E</span>
+      <span id="interact-text">Harvest Pine Tree</span>
+    </div>
+
+    <div id="raid-banner">
+      <div class="raid-title" id="raid-title">THE WILDS ARE STIRRING...</div>
+      <div class="raid-subtitle" id="raid-subtitle">MUTANT SWARM ASSAULT INCOMING! DEFEND THE OUTPOST!</div>
+    </div>
+
+    <!-- Valheim Modular Construction Tool Menu -->
+    <div id="build-menu">
+      <div class="build-header-hint">
+        <span>[<span class="highlight">SCROLL / Q·Z</span>] CYCLE &bull; [<span class="highlight">R</span>] ROTATE &bull; [<span class="highlight">LMB</span>] PLACE &bull; [<span class="highlight">X</span>] DISMANTLE &bull; [<span class="highlight">RMB / B</span>] BLUEPRINT CATALOG</span>
+      </div>
+      <div class="build-category">
+        <div class="build-item-btn active" data-build="campfire">
+          <div class="build-icon">🔥</div>
+          <div class="build-name">Campfire</div>
+          <div class="build-cost">5 Wood, 4 Stone</div>
+        </div>
+        <div class="build-item-btn" data-build="wood_barricade">
+          <div class="build-icon">🪵</div>
+          <div class="build-name">Barricade</div>
+          <div class="build-cost">4 Wood</div>
+        </div>
+        <div class="build-item-btn" data-build="wood_wall">
+          <div class="build-icon">🧱</div>
+          <div class="build-name">Log Wall</div>
+          <div class="build-cost">6 Wood</div>
+        </div>
+        <div class="build-item-btn" data-build="wood_window">
+          <div class="build-icon">🪟</div>
+          <div class="build-name">Firing Slit</div>
+          <div class="build-cost">6 Wood</div>
+        </div>
+        <div class="build-item-btn" data-build="wood_door">
+          <div class="build-icon">🚪</div>
+          <div class="build-name">Fort Door</div>
+          <div class="build-cost">6 Wood, 1 Scrap</div>
+        </div>
+        <div class="build-item-btn" data-build="wood_stairs">
+          <div class="build-icon">🪜</div>
+          <div class="build-name">Stairs</div>
+          <div class="build-cost">5 Wood</div>
+        </div>
+        <div class="build-item-btn" data-build="wood_roof">
+          <div class="build-icon">🛖</div>
+          <div class="build-name">Roof Tile</div>
+          <div class="build-cost">4 Wood</div>
+        </div>
+        <div class="build-item-btn" data-build="metal_spikes">
+          <div class="build-icon">⚔️</div>
+          <div class="build-name">Spikes</div>
+          <div class="build-cost">6 Wood, 2 Scrap</div>
+        </div>
+        <div class="build-item-btn" data-build="sandbag">
+          <div class="build-icon">🛡️</div>
+          <div class="build-name">Sandbags</div>
+          <div class="build-cost">8 Stone, 2 Scrap</div>
+        </div>
+        <div class="build-item-btn" data-build="workbench">
+          <div class="build-icon">⚙️</div>
+          <div class="build-name">Workbench</div>
+          <div class="build-cost">10 Wood, 5 Scrap</div>
+        </div>
+        <div class="build-item-btn" data-build="wooden_bed">
+          <div class="build-icon">🛏️</div>
+          <div class="build-name">Bed</div>
+          <div class="build-cost">8 Wood, 2 Cloth</div>
+        </div>
+        <div class="build-item-btn" data-build="storage_chest">
+          <div class="build-icon">📦</div>
+          <div class="build-name">Chest</div>
+          <div class="build-cost">8 Wood, 2 Scrap</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom HUD -->
+    <div class="bottom-hud">
+      <!-- Left: Valheim Food Stomach & Vitals -->
+      <div class="survival-vitals">
+        <div class="food-stomach">
+          <span class="stomach-label">FOOD</span>
+          <div class="food-slot" id="food-slot-1">
+            <span class="food-slot-icon">🍖</span>
+            <div class="food-timer-bar" style="width: 80%;"></div>
+          </div>
+          <div class="food-slot" id="food-slot-2">
+            <span class="food-slot-icon">🥫</span>
+            <div class="food-timer-bar" style="width: 50%;"></div>
+          </div>
+          <div class="food-slot" id="food-slot-3">
+            <span class="food-slot-icon">⚡</span>
+            <div class="food-timer-bar" style="width: 25%;"></div>
+          </div>
+        </div>
+
+        <div class="bars-container">
+          <div class="bar-wrapper">
+            <div class="bar-icon" style="color: #ef4444;">✚</div>
+            <div class="bar-track" id="health-track" style="width: 240px;">
+              <div class="bar-fill health-fill" id="health-bar" style="width: 100%;"></div>
+              <div class="bar-text" id="health-text">125 / 125 HP</div>
+            </div>
+          </div>
+          <div class="bar-wrapper">
+            <div class="bar-icon" style="color: #fbbf24;">⚡</div>
+            <div class="bar-track" id="stamina-track" style="width: 200px;">
+              <div class="bar-fill stamina-fill" id="stamina-bar" style="width: 100%;"></div>
+              <div class="bar-text" id="stamina-text">110 / 110 STAM</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Center: Hotbar (1-5) -->
+      <div class="hotbar-container" id="hotbar-slots">
+        <div class="hotbar-slot selected" data-slot="0">
+          <span class="hotbar-num">1</span>
+          <span class="hotbar-icon">🔫</span>
+          <span class="hotbar-count" id="hotbar-count-1">30</span>
+        </div>
+        <div class="hotbar-slot" data-slot="1">
+          <span class="hotbar-num">2</span>
+          <span class="hotbar-icon">💥</span>
+          <span class="hotbar-count" id="hotbar-count-2">8</span>
+        </div>
+        <div class="hotbar-slot" data-slot="2">
+          <span class="hotbar-num">3</span>
+          <span class="hotbar-icon">🎯</span>
+          <span class="hotbar-count" id="hotbar-count-3">5</span>
+        </div>
+        <div class="hotbar-slot" data-slot="3">
+          <span class="hotbar-num">4</span>
+          <span class="hotbar-icon">🔨</span>
+          <span class="hotbar-count" id="hotbar-count-4">BUILD</span>
+        </div>
+        <div class="hotbar-slot" data-slot="4">
+          <span class="hotbar-num">5</span>
+          <span class="hotbar-icon">🪓</span>
+          <span class="hotbar-count" id="hotbar-count-5">AXE</span>
+        </div>
+      </div>
+
+      <!-- Right: Weapon & Ammo Status -->
+      <div class="weapon-hud">
+        <div class="weapon-name" id="weapon-name">M4A1 CARBINE</div>
+        <div class="ammo-display">
+          <span class="ammo-clip" id="ammo-clip">30</span>
+          <span class="ammo-slash">/</span>
+          <span class="ammo-reserve" id="ammo-reserve">120</span>
+        </div>
+        <div class="fire-mode" id="fire-mode">AUTO &bull; 5.56x45mm NATO &bull; [G] GRENADE</div>
+      </div>
+    </div>
+
+    <!-- Keybind discovery bar -->
+    <div class="keybind-bar">
+      <span>[WASD]</span> MOVE &bull; <span>[SHIFT]</span> SPRINT &bull; <span>[C]</span> DIVE/CROUCH &bull; <span>[SPACE]</span> JUMP/SURFACE &bull; <span>[G]</span> GRENADE &bull; <span>[E]</span> INTERACT &bull; <span>[R]</span> RELOAD/ROTATE &bull; <span>[B]</span> BLUEPRINTS &bull; <span>[Q/Z]</span> CYCLE BUILD &bull; <span>[X]</span> DISMANTLE &bull; <span>[F]</span> FLASHLIGHT &bull; <span>[TAB]</span> INVENTORY
+    </div>
+  </div>
+
+  <!-- Blueprint Catalog Modal (opens with B / RMB in Build Mode) -->
+  <div id="blueprint-modal">
+    <div class="blueprint-window">
+      <div class="blueprint-header">
+        <div class="blueprint-title">🔨 Blueprint Catalog</div>
+        <button class="blueprint-close-btn" id="blueprint-close-btn">✕</button>
+      </div>
+      <div class="blueprint-hint">
+        Click a blueprint to select it &bull; [Q / Z] or [Scroll Wheel] to cycle &bull; [R] to rotate ghost &bull; [LMB] to place &bull; [X] to dismantle
+      </div>
+      <div class="blueprint-grid" id="blueprint-grid"></div>
+    </div>
+  </div>
+
+  <!-- Inventory Modal -->
+  <div id="inventory-modal">
+    <div class="inventory-window">
+      <div class="inv-header">
+        <div class="inv-title">TACTICAL BACKPACK &bull; CRAFTING</div>
+        <div class="inv-weight" id="inv-weight-display">WEIGHT: 28.5 / 150.0 KG</div>
+      </div>
+      <div class="inv-body">
+        <div class="inv-section-left">
+          <div class="section-title">STORAGE SLOTS</div>
+          <div class="grid-container" id="inventory-grid"></div>
+        </div>
+        <div class="inv-section-right">
+          <div class="section-title" id="craft-title">FIELD CRAFTING RECIPES</div>
+          <div class="craft-list" id="craft-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Start Screen -->
+  <div id="start-screen">
+    <h1 class="title-banner">ZONE ZERO: OUTPOST VALHEIM</h1>
+    <div class="subtitle-banner">MODERN TACTICAL SURVIVAL SHOOTER</div>
+
+    <div class="briefing-box">
+      <div class="briefing-row">
+        <span class="briefing-tag">VALHEIM SURVIVAL FOOD</span>
+        <span>Eat up to 3 distinct meals. Food dramatically expands your Max HP, Max Stamina, and passive recovery. Cook raw meat over campfires into Charbroiled Steaks!</span>
+      </div>
+      <div class="briefing-row">
+        <span class="briefing-tag">REST & COMFORT</span>
+        <span>Build roofs overhead and sit by fires for the <b>RESTED</b> buff (+100% Stamina regen). Avoid freezing cold nights and soaking rain.</span>
+      </div>
+      <div class="briefing-row">
+        <span class="briefing-tag">BUILDING & FORAGING</span>
+        <span>Equip the <b>Field Hammer (Slot 4)</b> to build sandbags, firing slits, doors, stairs, and workbenches. Fell trees with your <b>Tactical Hatchet (Slot 5)</b>.</span>
+      </div>
+      <div class="briefing-row">
+        <span class="briefing-tag">TACTICAL ARSENAL</span>
+        <span><b>M4A1</b> (Slot 1), <b>SPAS-12</b> (Slot 2), <b>AWM Sniper</b> (Slot 3), and press <b>[G]</b> to cook and throw high-explosive <b>M67 Frag Grenades</b>!</span>
+      </div>
+      <div class="briefing-row">
+        <span class="briefing-tag">TITAN BOSS & EXTRACTION</span>
+        <span>Defeat <b>The Iron Behemoth</b> to claim its Power Core, bring it to the mountain <b>Radio Relay Station</b>, and defend during the extraction landing!</span>
+      </div>
+    </div>
+
+    <button class="deploy-btn" id="deploy-btn">DEPLOY TO OPERATIONAL ZONE</button>
+  </div>
+
+  <script>
+    window.showTacticalNotification = (msg, type = 'info') => {
+      const toast = document.getElementById('hud-toast');
+      if (!toast) return;
+      toast.className = type;
+      toast.innerHTML = msg;
+      toast.style.display = 'block';
+      clearTimeout(window._toastTimeout);
+      window._toastTimeout = setTimeout(() => {
+        toast.style.display = 'none';
+      }, 3800);
+    };
+  </script>
+</body>
+</html>
