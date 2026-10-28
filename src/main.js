@@ -96,8 +96,10 @@ class GameEngine {
       this.collision
     );
 
-    const spawnY = this.terrain.getHeightAt(0, 0);
-    this.player.position.set(0, spawnY + 2.0, 0);
+    // Just beside the camp fire (which sits at the origin), clear of the seats and tents
+    const spawnZ = -3.5;
+    const spawnY = this.terrain.getHeightAt(0, spawnZ);
+    this.player.position.set(0, spawnY + 2.0, spawnZ);
     this.menuFocus.set(0, spawnY + 1.6, 0);
 
     this.post = new PostFX(this.renderer, this.scene, this.camera, { quality: this.quality });

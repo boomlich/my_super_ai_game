@@ -105,9 +105,14 @@ export class CollisionWorld {
       const min = c.r + radius;
       const d2 = dx * dx + dz * dz;
       if (d2 >= min * min) return false;
-      const d = Math.sqrt(d2) || 0.0001;
+      if (d2 < 1e-8) {
+        // Dead centre: no direction to push along, so leave along +x
+        pos.x += min;
+        return true;
+      }
+      const d = Math.sqrt(d2);
       const k = (min - d) / d;
-      pos.x += (d2 === 0 ? 1 : dx) * k;
+      pos.x += dx * k;
       pos.z += dz * k;
       return true;
     }
