@@ -208,6 +208,66 @@ export class ParticleManager {
     this.damageNumbers.push({ sprite, baseW, baseH, life: 0.9, maxLife: 0.9, velY: 1.8, pop: isCrit ? 1.35 : 1.15 });
   }
 
+  // Generic floating label (pickups, mining yields)
+  createFloatingText(pos, text, colorHex = 0xffffff) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 80;
+    const ctx = canvas.getContext('2d');
+    ctx.font = '700 44px Teko, Rajdhani, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    ctx.strokeText(text, 160, 42);
+    ctx.fillStyle = `#${new THREE.Color(colorHex).getHexString()}`;
+    ctx.fillText(text, 160, 42);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, fog: false }));
+    sprite.position.copy(pos).add(new THREE.Vector3(0, 0.5, 0));
+    const baseW = 2.0;
+    const baseH = 0.5;
+    sprite.scale.set(baseW, baseH, 1);
+    sprite.renderOrder = 10;
+    this.scene.add(sprite);
+    this.damageNumbers.push({ sprite, baseW, baseH, life: 1.1, maxLife: 1.1, velY: 1.3, pop: 1.1 });
+  }
+
+  // Rock chips, sparks and dust thrown off a pickaxe strike
+  createMineFX(pos, normal, colorHex = 0xb8b2a6, big = false) {
+    const n = normal.clone().normalize();
+    const spread = (v) => (Math.random() - 0.5) * v;
+    const chips = big ? 22 : 8;
+    for (let i = 0; i < chips; i++) {
+      this.spawn({
+        x: pos.x, y: pos.y, z: pos.z,
+        vx: n.x * (2 + Math.random() * 4) + spread(big ? 6 : 3.5), vy: n.y * 2 + 1.5 + Math.random() * (big ? 5 : 3), vz: n.z * (2 + Math.random() * 4) + spread(big ? 6 : 3.5),
+        life: 0.6 + Math.random() * 0.5, size0: 0.08 + Math.random() * 0.06, size1: 0.06,
+        color: i % 3 === 0 ? colorHex : 0x6f6a62, alpha: 1, gravity: 13
+      });
+    }
+    const sparks = big ? 16 : 7;
+    for (let i = 0; i < sparks; i++) {
+      this.spawn({
+        x: pos.x, y: pos.y, z: pos.z,
+        vx: n.x * (2 + Math.random() * 5) + spread(4), vy: n.y * 2 + Math.random() * 3, vz: n.z * (2 + Math.random() * 5) + spread(4),
+        life: 0.25 + Math.random() * 0.3, size0: 0.06, size1: 0.02,
+        color: colorHex, glow: 3, alpha: 1, additive: true, gravity: 9
+      });
+    }
+    for (let i = 0; i < (big ? 5 : 2); i++) {
+      this.spawn({
+        x: pos.x, y: pos.y, z: pos.z,
+        vx: n.x * 0.8 + spread(0.8), vy: 0.5 + Math.random() * 0.6, vz: n.z * 0.8 + spread(0.8),
+        life: 0.9 + Math.random() * 0.5, size0: 0.2, size1: big ? 1.6 : 0.9,
+        color: 0x9a9284, alpha: 0.35, drag: 2, fadeIn: 0.08
+      });
+    }
+  }
+
   createShockwave(pos, maxRadius = 12, color = 0x38bdf8) {
     const mat = new THREE.MeshBasicMaterial({
       color,

@@ -64,6 +64,9 @@ export const FOOD_DATABASE = {
   }
 };
 
+// Meals should last a few in-game hours, not seconds: the first raid arrives after ~7 minutes
+const FOOD_TIME_SCALE = 3.5;
+
 export class SurvivalSystem {
   constructor() {
     this.baseMaxHp = 25;
@@ -130,8 +133,8 @@ export class SurvivalSystem {
 
     const foodItem = {
       ...foodDef,
-      remaining: foodDef.duration,
-      totalDuration: foodDef.duration
+      remaining: foodDef.duration * FOOD_TIME_SCALE,
+      totalDuration: foodDef.duration * FOOD_TIME_SCALE
     };
 
     this.activeFoods.push(foodItem);

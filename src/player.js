@@ -5,9 +5,10 @@ import { buildWeaponModel, createMuzzleFlash } from './weapons.js';
 import { createGrenadeMesh } from './models.js';
 
 const VIEWMODEL_SCALE = 0.85;
+const PLAYER_RADIUS = 0.42;
 
 export class PlayerController {
-  constructor(camera, scene, terrain, survival, inventory, building, enemies, worldManager, particles) {
+  constructor(camera, scene, terrain, survival, inventory, building, enemies, worldManager, particles, collision = null) {
     this.camera = camera;
     this.scene = scene;
     this.terrain = terrain;
@@ -17,6 +18,7 @@ export class PlayerController {
     this.enemies = enemies;
     this.world = worldManager;
     this.particles = particles;
+    this.collision = collision;
 
     this.position = new THREE.Vector3(0, 5, 0);
     this.velocity = new THREE.Vector3();
@@ -96,11 +98,22 @@ export class PlayerController {
         fireRate: 0.45,
         damage: 45,
         auto: false
+      },
+      {
+        name: 'MINING PICKAXE',
+        type: 'pickaxe',
+        clip: '—',
+        maxClip: '—',
+        fireRate: 0.6,
+        damage: 40,
+        auto: false
       }
     ];
 
     this.fireTimer = 0;
     this.isReloading = false;
+    this.reloadRemaining = 0;
+    this.reloadWeapon = null;
     this.recoilOffset = new THREE.Vector3();
 
     this.weaponGroup = new THREE.Group();
@@ -202,7 +215,7 @@ export class PlayerController {
       this.keys[e.code] = true;
 
       // 1-5 Hotbar (with Numpad support)
-      if (['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Numpad1', 'Numpad2', 'Numpad3', 'Numpad4', 'Numpad5'].includes(e.code)) {
+      if (['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Numpad1', 'Numpad2', 'Numpad3', 'Numpad4', 'Numpad5', 'Numpad6'].includes(e.code)) {
         const numChar = e.code.replace('Digit', '').replace('Numpad', '');
         const slotIdx = parseInt(numChar) - 1;
         this.switchWeapon(slotIdx);
@@ -254,6 +267,7 @@ export class PlayerController {
 
   switchWeapon(slotIdx) {
     if (slotIdx < 0 || slotIdx >= this.weapons.length) return;
+    if (this.isReloading) this.isReloading = false; // switching weapons cancels the reload
     this.currentSlot = slotIdx;
     sounds.playMechanicalClick(1.0 + slotIdx * 0.1);
 
@@ -280,7 +294,8 @@ export class PlayerController {
       shotgun: [0.19, -0.2, -0.5],
       sniper: [0.19, -0.21, -0.55],
       hammer: [0.24, -0.26, -0.45],
-      axe: [0.24, -0.26, -0.45]
+      axe: [0.24, -0.26, -0.45],
+      pickaxe: [0.24, -0.26, -0.45]
     }[weapon.type];
     group.position.set(...restPose);
     group.scale.setScalar(VIEWMODEL_SCALE);
@@ -366,8 +381,19 @@ export class PlayerController {
       return;
     }
 
+    if (weapon.type === 'pickaxe') {
+      if (this.survival.consumeStamina(8)) {
+        this.swingPickaxe();
+        this.fireTimer = weapon.fireRate;
+      } else {
+        window.showTacticalNotification?.('OUT OF STAMINA — catch your breath', 'warning');
+      }
+      return;
+    }
+
     if (weapon.clip <= 0) {
-      sounds.playMechanicalClick(0.8);
+      sounds.playDryFire();
+      this.fireTimer = 0.25;
       this.reload();
       return;
     }
@@ -402,6 +428,8 @@ export class PlayerController {
     const aimDir = this.getCameraRay().direction;
     this.particles.createMuzzleSmoke(muzzle, aimDir, weapon.type !== 'rifle');
 
+    this.enemies.makeNoise(this.position, { rifle: 75, shotgun: 95, sniper: 125 }[weapon.type] ?? 70);
+
     const pelletCount = weapon.type === 'shotgun' ? 8 : 1;
     for (let p = 0; p < pelletCount; p++) {
       this.fireBallisticRay(weapon, muzzle, p < 3);
@@ -426,6 +454,8 @@ export class PlayerController {
     const enemyHit = raycaster.intersectObjects(enemyMeshes, true)[0];
     const treeHit = raycaster.intersectObjects(treeMeshes, true)[0];
     const terrainHit = this.terrain.raycast(ray.origin, ray.direction, 300);
+    const nodeMeshes = this.world.mineNodes.filter(n => n.mesh.visible).map(n => n.mesh);
+    const nodeHit = raycaster.intersectObjects(nodeMeshes, true)[0];
 
     let waterDist = Infinity;
     if (ray.direction.y < -0.0001 && ray.origin.y > this.terrain.waterLevel) {
@@ -436,6 +466,7 @@ export class PlayerController {
       { kind: 'enemy', distance: enemyHit ? enemyHit.distance : Infinity },
       { kind: 'tree', distance: treeHit ? treeHit.distance : Infinity },
       { kind: 'terrain', distance: terrainHit ? terrainHit.distance : Infinity },
+      { kind: 'rock', distance: nodeHit ? nodeHit.distance : Infinity },
       { kind: 'water', distance: waterDist < 300 ? waterDist : Infinity }
     ].sort((a, b) => a.distance - b.distance);
     const first = candidates[0];
@@ -462,6 +493,7 @@ export class PlayerController {
 
         this.enemies.damageEnemy(enemy, finalDamage);
         this.particles.createImpact(enemyHit.point, worldNormal(enemyHit), 'blood');
+        sounds.playImpact('flesh', enemyHit.point);
         this.particles.createDamageNumber(enemyHit.point, finalDamage, isHeadshot);
         this.triggerHitMarker(isHeadshot);
         tracerTo(enemyHit.point);
@@ -475,20 +507,30 @@ export class PlayerController {
       if (tree) {
         this.world.damageTree(tree, weapon.damage, treeHit.point, ray.direction);
         this.particles.createImpact(treeHit.point, worldNormal(treeHit), 'wood');
+        sounds.playImpact('wood', treeHit.point);
         tracerTo(treeHit.point);
       }
+    } else if (first.kind === 'rock') {
+      this.particles.createImpact(nodeHit.point, worldNormal(nodeHit), 'sparks');
+      sounds.playImpact('rock', nodeHit.point);
+      tracerTo(nodeHit.point);
     } else if (first.kind === 'water') {
       const splash = ray.origin.clone().addScaledVector(ray.direction, waterDist);
       this.particles.createWaterSplash(splash, 0.55);
       tracerTo(splash);
     } else {
       this.particles.createImpact(terrainHit.point, terrainHit.normal, 'sparks');
+      sounds.playImpact('dirt', terrainHit.point);
       tracerTo(terrainHit.point);
     }
   }
 
+  worldNormalOf(hit) {
+    return hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : new THREE.Vector3(0, 1, 0);
+  }
+
   swingAxe() {
-    sounds.playAxeChop();
+    sounds.playSwing();
     this.meleeSwing = 1;
     this.recoilOffset.y = -0.15;
     this.recoilOffset.z = 0.2;
@@ -505,9 +547,20 @@ export class PlayerController {
       const tree = this.world.trees.find(t => t.mesh === root);
       if (tree) {
         this.world.damageTree(tree, 50, hit.point, ray.direction);
-        this.particles.createImpact(hit.point, hit.face.normal.clone().transformDirection(hit.object.matrixWorld), 'wood');
+        this.particles.createImpact(hit.point, this.worldNormalOf(hit), 'wood');
+        sounds.playAxeChop(hit.point);
+        this.enemies.makeNoise(this.position, 32);
+        this.screenShake = Math.max(this.screenShake, 0.04);
         return;
       }
+    }
+
+    const rockHit = raycaster.intersectObjects(this.world.mineNodes.filter(n => n.mesh.visible).map(n => n.mesh), true)[0];
+    if (rockHit) {
+      this.particles.createImpact(rockHit.point, this.worldNormalOf(rockHit), 'sparks');
+      sounds.playImpact('rock', rockHit.point);
+      this.notifyOnce('pickaxe-hint', 'A hatchet cannot break rock — equip the MINING PICKAXE [6]', 'info');
+      return;
     }
 
     const enemyMeshes = this.enemies.enemies.map(e => e.mesh);
@@ -519,32 +572,111 @@ export class PlayerController {
       const enemy = this.enemies.enemies.find(e => e.mesh === root);
       if (enemy) {
         this.enemies.damageEnemy(enemy, 60);
-        this.particles.createImpact(hit.point, hit.face.normal.clone().transformDirection(hit.object.matrixWorld), 'blood');
+        this.particles.createImpact(hit.point, this.worldNormalOf(hit), 'blood');
+        sounds.playImpact('flesh', hit.point);
         this.particles.createDamageNumber(hit.point, 60, false);
         this.triggerHitMarker(false);
       }
     }
   }
 
+  notifyOnce(key, message, type = 'info') {
+    this._notified = this._notified || new Set();
+    if (this._notified.has(key)) return;
+    this._notified.add(key);
+    window.showTacticalNotification?.(message, type);
+  }
+
+  // Pickaxe: chips ore out of boulders, veins and crystal clusters straight into the backpack
+  swingPickaxe() {
+    sounds.playSwing();
+    this.meleeSwing = 1;
+    this.recoilOffset.y = -0.12;
+    this.recoilOffset.z = 0.18;
+
+    const ray = this.getCameraRay();
+    const raycaster = new THREE.Raycaster(ray.origin, ray.direction, 0.3, 3.9);
+    const nodes = this.world.mineNodes.filter(n => n.mesh.visible);
+    const hit = raycaster.intersectObjects(nodes.map(n => n.mesh), true)[0];
+
+    if (hit) {
+      let root = hit.object;
+      while (root.parent && !nodes.some(n => n.mesh === root)) root = root.parent;
+      const node = nodes.find(n => n.mesh === root);
+      if (node) {
+        const normal = this.worldNormalOf(hit);
+        const { items, broken } = this.world.damageNode(node, this.weapons[this.currentSlot].damage);
+        this.particles.createMineFX(hit.point, normal, node.def.spark, broken);
+        sounds.playMineHit(node.kind, hit.point);
+        if (broken) sounds.playMineBreak(node.kind, hit.point);
+        this.screenShake = Math.max(this.screenShake, broken ? 0.12 : 0.06);
+        this.enemies.makeNoise(this.position, 36);
+
+        const total = items.reduce((sum, it) => sum + it.count, 0);
+        for (const it of items) this.inventory.addItem(it.id, it.count);
+        this.particles.createFloatingText(hit.point, `+${total} ${node.def.label}`, node.def.spark);
+        sounds.playPickup();
+        this.updateHUD();
+        return;
+      }
+    }
+
+    // Swinging at dirt or a tree: dull thud, no yield
+    const ground = this.terrain.raycast(ray.origin, ray.direction, 3.9);
+    if (ground) {
+      this.particles.createImpact(ground.point, ground.normal, 'wood');
+      sounds.playImpact('dirt', ground.point);
+    }
+  }
+
+  magSize(weapon) {
+    return weapon.type === 'rifle' ? 30 : (weapon.type === 'shotgun' ? 8 : 5);
+  }
+
+  // Rounds available outside the weapon: loose rounds from partly used magazines plus whole ammo items
+  reserveRounds(weapon) {
+    if (!weapon.ammoType) return 0;
+    return (weapon.looseRounds || 0) + this.inventory.getItemCount(weapon.ammoType) * this.magSize(weapon);
+  }
+
+  takeRounds(weapon, need) {
+    let taken = 0;
+    while (taken < need) {
+      if ((weapon.looseRounds || 0) <= 0) {
+        if (this.inventory.getItemCount(weapon.ammoType) <= 0) break;
+        this.inventory.consumeItem(weapon.ammoType, 1);
+        weapon.looseRounds = (weapon.looseRounds || 0) + this.magSize(weapon);
+      }
+      const use = Math.min(need - taken, weapon.looseRounds);
+      weapon.looseRounds -= use;
+      taken += use;
+    }
+    return taken;
+  }
+
   reload() {
     const weapon = this.weapons[this.currentSlot];
     if (!weapon.ammoType || weapon.clip >= weapon.maxClip || this.isReloading) return;
 
-    const reserveCount = this.inventory.getItemCount(weapon.ammoType) * (weapon.type === 'rifle' ? 30 : (weapon.type === 'shotgun' ? 8 : 5));
-    if (reserveCount <= 0) {
-      window.showTacticalNotification?.('RELOAD FAILED: Out of Ammunition! Craft more in [Tab]', 'warning');
+    if (this.reserveRounds(weapon) <= 0) {
+      this.notifyOnce(`noammo-${weapon.type}`, 'OUT OF AMMUNITION — salvage scrap + gunpowder and craft more in [Tab]', 'warning');
       return;
     }
 
     this.isReloading = true;
-    sounds.playMechanicalClick(0.9);
+    this.reloadRemaining = 1.5;
+    this.reloadWeapon = weapon;
+    sounds.playReload(weapon.type);
+  }
 
-    setTimeout(() => {
-      weapon.clip = weapon.maxClip;
-      this.isReloading = false;
-      sounds.playMechanicalClick(1.3);
-      this.updateHUD();
-    }, 1500);
+  updateReload(delta) {
+    if (!this.isReloading) return;
+    this.reloadRemaining -= delta;
+    if (this.reloadRemaining > 0) return;
+    const weapon = this.reloadWeapon;
+    weapon.clip += this.takeRounds(weapon, weapon.maxClip - weapon.clip);
+    this.isReloading = false;
+    this.updateHUD();
   }
 
   triggerHitMarker(isHeadshot = false) {
@@ -613,6 +745,23 @@ export class PlayerController {
     }
   }
 
+  // Surface under the player's feet, used to pick footstep sounds
+  getSurface() {
+    if (this.isSwimming) return 'water';
+    const { x, z } = this.position;
+    const h = this.terrain.getHeightAt(x, z);
+    const wl = this.terrain.waterLevel;
+    if (h < wl + 0.25) return 'water';
+    if (Math.abs(x) < 3.5 && Math.abs(z) < 3.5) return 'wood';
+    for (const s of this.building.structures) {
+      if (s.type === 'wood_stairs' && s.position.distanceTo(this.position) < 2.5) return 'wood';
+    }
+    if (h < wl + 1.2) return 'sand';
+    if (h > 32) return 'snow';
+    if (h > 21 || this.terrain.getNormalAt(x, z).y < 0.82) return 'rock';
+    return Math.hypot(x, z) > 60 && this.terrain.noise.noise2D(x * 0.07 - 9, z * 0.07 + 31) > 0.3 ? 'dirt' : 'grass';
+  }
+
   getCameraRay() {
     const origin = this.camera.position.clone();
     const direction = new THREE.Vector3();
@@ -622,6 +771,7 @@ export class PlayerController {
 
   update(delta) {
     if (this.fireTimer > 0) this.fireTimer -= delta;
+    this.updateReload(delta);
 
     if (this.mouseDown && this.weapons[this.currentSlot].auto && !this.isSwimming) {
       this.onPrimaryAction();
@@ -644,7 +794,8 @@ export class PlayerController {
 
       if (g.fuse <= 0) {
         const boomPos = g.mesh.position.clone();
-        sounds.playExplosion();
+        sounds.playExplosion(boomPos);
+        this.enemies.makeNoise(boomPos, 135);
         this.particles.createExplosionFX(boomPos);
         this.screenShake = 0.25;
 
@@ -769,8 +920,11 @@ export class PlayerController {
 
       if (isMoving && this.isGrounded) {
         this.bobTimer += delta * (this.isSprinting ? 14 : 9);
-        if (Math.sin(this.bobTimer) > 0.95 && Math.random() < 0.25) {
-          sounds.playFootstep();
+        this.stepDistance = (this.stepDistance || 0) + speed * delta;
+        const stride = this.isSprinting ? 2.5 : (this.keys['KeyC'] ? 1.3 : 1.85);
+        if (this.stepDistance >= stride) {
+          this.stepDistance = 0;
+          sounds.playFootstep(this.getSurface(), this.isSprinting ? 1.25 : (this.keys['KeyC'] ? 0.4 : 0.85));
         }
       }
 
@@ -791,26 +945,23 @@ export class PlayerController {
     this.position.x += this.velocity.x * delta;
     this.position.z += this.velocity.z * delta;
 
-    // Structure horizontal collision
-    if (this.building && this.building.structures) {
-      for (const s of this.building.structures) {
-        if (['wood_wall', 'wood_window', 'sandbag', 'metal_spikes'].includes(s.type) || (s.type === 'wood_door' && !s.isOpen)) {
-          const dist = Math.hypot(this.position.x - s.position.x, this.position.z - s.position.z);
-          const minDistance = s.type === 'sandbag' ? 1.6 : 1.4;
-          if (dist < minDistance && Math.abs(this.position.y - s.position.y) < 2.5) {
-            const pushDir = new THREE.Vector3(this.position.x - s.position.x, 0, this.position.z - s.position.z).normalize();
-            this.position.x = s.position.x + pushDir.x * minDistance;
-            this.position.z = s.position.z + pushDir.z * minDistance;
-          }
-        }
-      }
+    // Obstacle collision (trees, boulders, ore, buildings, landmarks) and walkable ramps
+    const eyeHeight = this.keys['KeyC'] ? 1.0 : 1.75;
+    let supportY = this.terrain.getHeightAt(this.position.x, this.position.z);
+    if (this.collision) {
+      const feetY = this.position.y - eyeHeight;
+      this.collision.resolve(this.position, PLAYER_RADIUS, feetY, eyeHeight + 0.2);
+      supportY = Math.max(supportY, this.collision.surfaceHeight(this.position.x, this.position.z, feetY));
     }
 
     // Ground clamping when not swimming
     if (!this.isSwimming) {
-      const eyeHeight = this.keys['KeyC'] ? 1.0 : 1.75;
-      if (this.position.y <= groundY + eyeHeight) {
-        this.position.y = groundY + eyeHeight;
+      if (this.position.y <= supportY + eyeHeight) {
+        if (this.velocity.y < -5.5) {
+          sounds.playFootstep(this.getSurface(), 1.6);
+          this.screenShake = Math.max(this.screenShake, 0.03);
+        }
+        this.position.y = supportY + eyeHeight;
         this.velocity.y = 0;
         this.isGrounded = true;
       }
@@ -955,6 +1106,23 @@ export class PlayerController {
       }
     }
 
+    if (this.weapons[this.currentSlot].type === 'pickaxe') {
+      const ray = this.getCameraRay();
+      const raycaster = new THREE.Raycaster(ray.origin, ray.direction, 0.3, 4.2);
+      const nodes = this.world.mineNodes.filter(n => n.mesh.visible);
+      const hit = raycaster.intersectObjects(nodes.map(n => n.mesh), true)[0];
+      if (hit) {
+        let root = hit.object;
+        while (root.parent && !nodes.some(n => n.mesh === root)) root = root.parent;
+        const node = nodes.find(n => n.mesh === root);
+        if (node) {
+          this.domInteractPrompt.style.display = 'flex';
+          this.domInteractText.textContent = `Mine ${node.name} (${Math.max(0, Math.ceil(node.hp / node.maxHp * 100))}%)`;
+          return;
+        }
+      }
+    }
+
     const tower = this.world.landmarks.find(l => l.isObjective);
     if (tower && this.position.distanceTo(tower.position) < 6.0) {
       this.domInteractPrompt.style.display = 'flex';
@@ -1008,8 +1176,7 @@ export class PlayerController {
 
     if (this.domAmmoReserve) {
       if (weapon.ammoType) {
-        const ammoCount = this.inventory.getItemCount(weapon.ammoType) * (weapon.type === 'rifle' ? 30 : (weapon.type === 'shotgun' ? 8 : 5));
-        this.domAmmoReserve.textContent = ammoCount;
+        this.domAmmoReserve.textContent = this.reserveRounds(weapon);
       } else {
         this.domAmmoReserve.textContent = '—';
       }
@@ -1022,6 +1189,7 @@ export class PlayerController {
       else if (weapon.type === 'sniper') this.domFireMode.innerHTML = 'BOLT ACTION &bull; .338 LAPUA MAGNUM &bull; [G] GRENADE';
       else if (weapon.type === 'hammer') this.domFireMode.innerHTML = 'CONSTRUCTION TOOL &bull; [SCROLL/Q] SELECT &bull; [B] CATALOG &bull; [R] ROTATE';
       else if (weapon.type === 'axe') this.domFireMode.innerHTML = 'TACTICAL HATCHET &bull; FELL PINE TREES';
+      else if (weapon.type === 'pickaxe') this.domFireMode.innerHTML = 'MINING PICKAXE &bull; STONE, IRON &amp; CRYSTAL DEPOSITS';
     }
   }
 }

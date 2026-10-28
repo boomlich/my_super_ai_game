@@ -58,4 +58,17 @@
 | **E** | Interact (Harvest berry bushes, salvage scrap caches) |
 | **F** | Toggle Tactical Weapon Flashlight |
 | **Tab** | Open Tactical Backpack & Field Crafting Menu |
-| **1 - 5** | Hotbar: 1: M4A1, 2: Shotgun, 3: Sniper, 4: Hammer, 5: Hatchet |
+| **1 - 6** | Hotbar: 1: M4A1, 2: Shotgun, 3: Sniper, 4: Hammer, 5: Hatchet, 6: Mining Pickaxe |
+
+---
+
+## Gameplay notes
+
+- **Mining**: equip the **Pickaxe (6)** and strike stone boulders, rust-streaked iron veins and glowing tech-crystal clusters. They yield stone, scrap metal and components straight into the backpack, break after a handful of swings and regrow after ~4 minutes. Each swing costs stamina and is audible to enemies.
+- **Stealth**: enemies have vision cones, hearing and an awareness meter (`?` then `!` above their heads). Crouching (**C**) and standing still shrink their sight range; sprinting, gunfire, explosions and tool strikes carry. Radar dots show who is idle, alert (yellow) or hunting you (red).
+- **Safe zone**: the starter meadow is off limits to wandering enemies. A raid (announced ~25 s ahead) ignores that rule; log walls and doors stop walking enemies, who will go around or, as a last resort, break through.
+- **Extraction**: calling the VTOL starts a 75 s defence of the summit; it must land before you can board.
+
+## Playtesting
+
+Run the dev server and open `http://localhost:5173/?playtest`. The harness fast-forwards the real game logic with a scripted bot and checks invariants (no falling through the world, no standing inside solids, enemies out of water, particle budgets, NaNs) while it runs scenarios for collision, perception and stealth, hearing, combat fairness, pathing, swimming, mining, ammo economy, building, raids, extraction, audio and a 4-minute random-walk soak. Use **Run all** or call `await __playtest.run('mining')` in the console; results are also stored in `window.__playtestReport`.

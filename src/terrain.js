@@ -69,6 +69,10 @@ class FastNoise {
   }
 }
 
+// Raises the interior so the map is one landmass with a lake and coastline instead of many islands
+export const HEIGHT_LIFT = 6;
+export const CAMP_HEIGHT = 5.0;
+
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 // GLSL-style smoothstep that also works for descending edges (a > b)
 const smooth = (a, b, v) => {
@@ -102,33 +106,84 @@ const TERRAIN_FRAGMENT_PARS = /* glsl */`
   }
 `;
 
+// Directional waves: [heading (rad), wavelength (m), amplitude (m), choppiness]. The same table drives the
+// vertex shader and Terrain.getWaterHeightAt(), so swimming buoyancy follows the visible surface.
+const WAVE_SET = [
+  [0.35, 46, 0.62, 0.55],
+  [1.15, 29, 0.4, 0.5],
+  [-0.55, 18, 0.26, 0.6],
+  [2.1, 11.5, 0.15, 0.6],
+  [-1.4, 7.2, 0.085, 0.6],
+  [0.8, 4.6, 0.05, 0.5],
+  [-2.4, 3.1, 0.03, 0.4]
+].map(([heading, length, amp, steep]) => {
+  const k = (Math.PI * 2) / length;
+  return { dx: Math.cos(heading), dz: Math.sin(heading), k, w: Math.sqrt(9.8 * k) * 0.85, amp: amp * 0.72, steep, length };
+});
+const WAVE_AMP_SUM = WAVE_SET.reduce((sum, w) => sum + w.amp, 0);
+
+const waveA = WAVE_SET.map(w => `vec4(${w.dx.toFixed(5)}, ${w.dz.toFixed(5)}, ${w.k.toFixed(5)}, ${w.w.toFixed(5)})`).join(', ');
+const waveB = WAVE_SET.map(w => `vec3(${w.amp.toFixed(4)}, ${w.steep.toFixed(3)}, ${w.length.toFixed(2)})`).join(', ');
+
+const SHORE_NEAR = 0.15;
+const SHORE_FAR = 3.2;
+
 const WATER_VERTEX = /* glsl */`
-  uniform float uWaterTime;
+  uniform float uWaterTime, uWaterLevel, uTerrainSize, uOvercast;
+  uniform sampler2D uHeightTex;
   varying vec3 vWPos;
   varying vec3 vNrm;
   varying float vWave;
+  varying float vCrest;
+  varying float vSteep;
 
-  // Must match Terrain.getWaterHeightAt() so swimming buoyancy lines up with the visuals.
-  vec3 waveField(vec2 p, float t) {
-    float a1 = p.x * 0.08 + t * 2.2;
-    float b1 = p.y * 0.06 + t * 1.8;
-    float c = (p.x + p.y) * 0.05 + t * 1.5;
-    float d = p.x * 0.16 - p.y * 0.12 + t * 2.8;
-    float h = sin(a1) * cos(b1) * 0.32 + sin(c) * 0.22 + cos(d) * 0.12;
-    float dx = cos(a1) * cos(b1) * 0.32 * 0.08 + cos(c) * 0.22 * 0.05 - sin(d) * 0.12 * 0.16;
-    float dz = -sin(a1) * sin(b1) * 0.32 * 0.06 + cos(c) * 0.22 * 0.05 + sin(d) * 0.12 * 0.12;
-    return vec3(h, dx, dz);
+  const int WAVE_COUNT = ${WAVE_SET.length};
+  const vec4 WAVE_A[WAVE_COUNT] = vec4[WAVE_COUNT](${waveA});
+  const vec3 WAVE_B[WAVE_COUNT] = vec3[WAVE_COUNT](${waveB});
+  const float AMP_SUM = ${WAVE_AMP_SUM.toFixed(4)};
+
+  // Gerstner-style sum: height, slope and the horizontal pull that sharpens crests.
+  void waveField(vec2 p, float t, float ampMul, float camDist, out float h, out vec2 grad, out vec2 disp) {
+    h = 0.0;
+    grad = vec2(0.0);
+    disp = vec2(0.0);
+    for (int i = 0; i < WAVE_COUNT; i++) {
+      vec4 A = WAVE_A[i];
+      vec3 B = WAVE_B[i];
+      // Short waves fade out with distance so the coarse far mesh never aliases
+      float lod = 1.0 - smoothstep(B.z * 7.0, B.z * 16.0, camDist);
+      float a = B.x * ampMul * lod;
+      float phase = dot(A.xy, p) * A.z - A.w * t;
+      float s = sin(phase);
+      float c = cos(phase);
+      h += a * s;
+      grad += A.xy * (a * A.z * c);
+      disp += A.xy * (B.y * a * c);
+    }
   }
 
   void main() {
-    vec3 p = position;
-    vec3 w = waveField(p.xz, uWaterTime);
-    p.y += w.x;
-    vec4 wp = modelMatrix * vec4(p, 1.0);
-    vWPos = wp.xyz;
-    vWave = w.x;
-    vNrm = normalize(vec3(-w.y, 1.0, -w.z));
-    gl_Position = projectionMatrix * viewMatrix * wp;
+    vec4 base = modelMatrix * vec4(position, 1.0);
+    vec2 p = base.xz;
+
+    // Waves die down in shallows so they never clip through the shoreline
+    float th = texture2D(uHeightTex, p / uTerrainSize + 0.5).r;
+    float depth = uWaterLevel - th;
+    float ampMul = mix(0.1, 1.0, smoothstep(${SHORE_NEAR.toFixed(2)}, ${SHORE_FAR.toFixed(2)}, depth)) * (1.0 + 0.9 * uOvercast);
+
+    float camDist = length(cameraPosition.xz - p);
+    float h;
+    vec2 grad;
+    vec2 disp;
+    waveField(p, uWaterTime, ampMul, camDist, h, grad, disp);
+
+    vec3 world = vec3(p.x + disp.x, uWaterLevel + h, p.y + disp.y);
+    vWPos = world;
+    vWave = h;
+    vCrest = h / max(AMP_SUM * ampMul, 0.12);
+    vSteep = length(grad);
+    vNrm = normalize(vec3(-grad.x, 1.0, -grad.y));
+    gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
   }
 `;
 
@@ -140,6 +195,8 @@ const WATER_FRAGMENT = /* glsl */`
   varying vec3 vWPos;
   varying vec3 vNrm;
   varying float vWave;
+  varying float vCrest;
+  varying float vSteep;
   ${NOISE_GLSL}
 
   vec2 ripples(vec2 p, float t) {
@@ -186,6 +243,7 @@ const WATER_FRAGMENT = /* glsl */`
     R.y = abs(R.y);
     vec3 sky = mix(uHorizon, uZenith, pow(clamp(R.y, 0.0, 1.0), 0.5));
     float fres = clamp(0.02 + 0.98 * pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 5.0), 0.0, 1.0);
+    body *= 0.8 + 0.35 * clamp(vCrest * 0.5 + 0.5, 0.0, 1.0);
     vec3 col = mix(body, sky, fres * 0.9);
 
     // Sun / moon glitter (HDR so bloom blooms it)
@@ -198,8 +256,8 @@ const WATER_FRAGMENT = /* glsl */`
     float fn = tn(xz * 0.9 + uWaterTime * 0.4) * 0.6 + tn(xz * 3.1 - uWaterTime * 0.7) * 0.4;
     float shoreFoam = smoothstep(0.7, 0.0, d + (fn - 0.5) * 0.55 + sin(uWaterTime * 1.6 + xz.x * 0.4 + xz.y * 0.3) * 0.14);
     shoreFoam *= smoothstep(0.0, 0.05, d);
-    float crest = smoothstep(0.32, 0.56, vWave + fn * 0.14);
-    float foam = clamp(max(shoreFoam, crest * 0.55), 0.0, 1.0);
+    float crest = smoothstep(0.62, 0.98, vCrest + (fn - 0.5) * 0.3) * smoothstep(0.12, 0.3, vSteep);
+    float foam = clamp(max(shoreFoam, crest * 0.8), 0.0, 1.0);
     vec3 foamCol = vec3(0.92, 0.97, 1.0) * (ambient * 0.9 + 0.08);
     col = mix(col, foamCol, foam * 0.85);
 
@@ -229,7 +287,45 @@ export class Terrain {
     this.heightGrid = null;
 
     this.initTerrain();
+    this.buildWalkGrid();
     this.initWater();
+  }
+
+  // Flood-fills dry, not-too-steep ground outward from the starter camp. Spawns and deposits use it so nothing is
+  // placed on an island the player (or the enemies) can never reach on foot.
+  buildWalkGrid(cell = 5) {
+    const half = Math.floor(this.size / 2 / cell);
+    const n = half * 2 + 1;
+    const heights = new Float32Array(n * n);
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) heights[j * n + i] = this.getHeightAt((i - half) * cell, (j - half) * cell);
+    }
+    const reach = new Uint8Array(n * n);
+    const stack = [half * n + half];
+    reach[half * n + half] = 1;
+    const wet = this.waterLevel + 0.2;
+    while (stack.length) {
+      const idx = stack.pop();
+      const i = idx % n;
+      const j = (idx - i) / n;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const ni = i + di;
+        const nj = j + dj;
+        if (ni < 0 || nj < 0 || ni >= n || nj >= n) continue;
+        const k = nj * n + ni;
+        if (reach[k] || heights[k] < wet || Math.abs(heights[k] - heights[idx]) / cell > 1.3) continue;
+        reach[k] = 1;
+        stack.push(k);
+      }
+    }
+    this.walk = { cell, half, n, reach };
+  }
+
+  isWalkable(x, z) {
+    const w = this.walk;
+    const i = Math.round(x / w.cell) + w.half;
+    const j = Math.round(z / w.cell) + w.half;
+    return i >= 0 && j >= 0 && i < w.n && j < w.n && w.reach[j * w.n + i] === 1;
   }
 
   getHeightAt(x, z) {
@@ -247,6 +343,7 @@ export class Terrain {
     const nHills = this.noise.fbm(x * 0.012, z * 0.012, 3) * 6.0;
 
     let height = (n1 * 18.0) + nHills + n2 + mountainElevation;
+    height += HEIGHT_LIFT * (1 - smooth(rad * 0.5, rad * 0.8, dist));
 
     // Lake depression in South-East quadrant
     const lakeDist = Math.hypot(x - 80, z - 70);
@@ -257,7 +354,7 @@ export class Terrain {
 
     if (dist < 40) {
       const flatten = 1 - (dist / 40);
-      height = height * (1 - flatten) + 3.0 * flatten;
+      height = height * (1 - flatten) + CAMP_HEIGHT * flatten;
     }
 
     if (dist > rad * 0.75) {
@@ -277,13 +374,17 @@ export class Terrain {
     return out.set(hl - hr, 2 * e, hd - hu).normalize();
   }
 
-  // Dynamic wave height sampler (matches the water vertex shader for swimming buoyancy)
+  // Mirrors the water vertex shader (heights only) so swimming and splashes sit on the visible surface
   getWaterHeightAt(x, z) {
     const t = this.waterTime;
-    const wave1 = Math.sin(x * 0.08 + t * 2.2) * Math.cos(z * 0.06 + t * 1.8) * 0.32;
-    const wave2 = Math.sin((x + z) * 0.05 + t * 1.5) * 0.22;
-    const wave3 = Math.cos(x * 0.16 - z * 0.12 + t * 2.8) * 0.12;
-    return this.waterLevel + wave1 + wave2 + wave3;
+    const depth = this.waterLevel - this.getHeightAt(x, z);
+    const shore = 0.1 + 0.9 * smooth(SHORE_NEAR, SHORE_FAR, depth);
+    const ampMul = shore * (1 + 0.9 * atmo.uniforms.uOvercast.value);
+    let h = 0;
+    for (const w of WAVE_SET) {
+      h += w.amp * ampMul * Math.sin((w.dx * x + w.dz * z) * w.k - w.w * t);
+    }
+    return this.waterLevel + h;
   }
 
   // Marches a ray against the analytic heightfield (far cheaper than raycasting the mesh).
@@ -424,9 +525,9 @@ export class Terrain {
       // Cliffs and altitude
       const rockMix = this.noise.noise2D(x * 0.09, z * 0.09) * 0.5 + 0.5;
       rock.copy(cRock).lerp(cRockDark, rockMix * 0.8);
-      c.lerp(rock,Math.max(smooth(0.84, 0.64, ny), smooth(14, 24, y) * 0.9));
+      c.lerp(rock, Math.max(smooth(0.84, 0.64, ny), smooth(14 + HEIGHT_LIFT, 24 + HEIGHT_LIFT, y) * 0.9));
 
-      const snow = smooth(27 + this.noise.noise2D(x * 0.05, z * 0.05) * 3, 34, y) * (0.35 + 0.65 * smooth(0.55, 0.8, ny));
+      const snow = smooth(27 + HEIGHT_LIFT + this.noise.noise2D(x * 0.05, z * 0.05) * 3, 34 + HEIGHT_LIFT, y) * (0.35 + 0.65 * smooth(0.55, 0.8, ny));
       c.lerp(cSnow, snow);
 
       colors[i * 3] = c.r;
@@ -449,11 +550,7 @@ export class Terrain {
     heightTex.generateMipmaps = false;
     heightTex.needsUpdate = true;
 
-    const waterSize = this.size * 1.35;
-    const geo = new THREE.PlaneGeometry(waterSize, waterSize, 200, 200);
-    geo.rotateX(-Math.PI / 2);
-    geo.deleteAttribute('normal');
-    geo.deleteAttribute('uv');
+    const geo = this.buildWaterGeometry();
 
     this.waterMaterial = new THREE.ShaderMaterial({
       uniforms: {
@@ -471,14 +568,48 @@ export class Terrain {
     });
 
     this.waterMesh = new THREE.Mesh(geo, this.waterMaterial);
-    this.waterMesh.position.y = this.waterLevel;
     this.waterMesh.frustumCulled = false;
     this.waterMesh.renderOrder = 2;
     this.scene.add(this.waterMesh);
   }
 
-  update(delta) {
+  // Polar grid centred on the camera: ~0.7 m cells next to the player, stretching to the horizon
+  buildWaterGeometry() {
+    const rings = 150;
+    const segs = 256;
+    const maxR = 720;
+    const positions = new Float32Array((rings + 1) * segs * 3);
+    for (let i = 0; i <= rings; i++) {
+      const r = maxR * Math.pow(i / rings, 2.2);
+      for (let j = 0; j < segs; j++) {
+        const a = (j / segs) * Math.PI * 2;
+        const o = (i * segs + j) * 3;
+        positions[o] = Math.cos(a) * r;
+        positions[o + 1] = 0;
+        positions[o + 2] = Math.sin(a) * r;
+      }
+    }
+    const indices = new Uint32Array(rings * segs * 6);
+    let n = 0;
+    for (let i = 0; i < rings; i++) {
+      for (let j = 0; j < segs; j++) {
+        const a = i * segs + j;
+        const b = i * segs + ((j + 1) % segs);
+        const c = (i + 1) * segs + j;
+        const d = (i + 1) * segs + ((j + 1) % segs);
+        indices[n++] = a; indices[n++] = c; indices[n++] = b;
+        indices[n++] = b; indices[n++] = c; indices[n++] = d;
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setIndex(new THREE.BufferAttribute(indices, 1));
+    return geo;
+  }
+
+  update(delta, focus = null) {
     this.waterTime += delta * 1.25;
     this.waterMaterial.uniforms.uWaterTime.value = this.waterTime;
+    if (focus) this.waterMesh.position.set(focus.x, 0, focus.z);
   }
 }

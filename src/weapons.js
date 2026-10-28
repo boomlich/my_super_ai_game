@@ -274,8 +274,29 @@ function buildAxe() {
   return result(g, { slide: null, sightY: 0.1, muzzle: null, flashScale: 0 });
 }
 
+// ---------- Pickaxe ----------
+
+function buildPickaxe() {
+  const m = materials();
+  const g = new THREE.Group();
+  part(g, new THREE.CylinderGeometry(0.022, 0.027, 0.72, 10), m.wood, 0, 0.05, 0);
+  for (let i = 0; i < 3; i++) part(g, new THREE.CylinderGeometry(0.0285, 0.0285, 0.016, 10), m.leather, 0, -0.2 + i * 0.03, 0);
+
+  // Head: a collar plus two drooping spikes across the swing path
+  part(g, box(0.07, 0.06, 0.06), m.anodized, 0, 0.4, 0);
+  const spikeL = part(g, new THREE.ConeGeometry(0.026, 0.24, 7), m.steel, -0.145, 0.375, 0, 0, 0, Math.PI / 2 + 0.32);
+  const spikeR = part(g, new THREE.ConeGeometry(0.026, 0.24, 7), m.steel, 0.145, 0.375, 0, 0, 0, -Math.PI / 2 - 0.32);
+  spikeL.scale.set(1, 1, 0.8);
+  spikeR.scale.set(1, 1, 0.8);
+
+  hand(g, 0, -0.14, 0, { rx: Math.PI / 2 });
+  sleeve(g, new THREE.Vector3(0, -0.16, 0.05), new THREE.Vector3(0.02, -0.3, 0.55));
+  return result(g, { slide: null, sightY: 0.1, muzzle: null, flashScale: 0 });
+}
+
 export function buildWeaponModel(type) {
   switch (type) {
+    case 'pickaxe': return buildPickaxe();
     case 'rifle': return buildRifle();
     case 'shotgun': return buildShotgun();
     case 'sniper': return buildSniper();

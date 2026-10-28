@@ -416,6 +416,7 @@ function glowSprite(color, scale) {
   }
   const s = new THREE.Sprite(glowSprites.get(key));
   s.scale.setScalar(scale);
+  s.raycast = () => {};
   return s;
 }
 
@@ -568,4 +569,68 @@ export function createHelicopter() {
   group.add(navRed, navGreen);
 
   return { group, rotor, tailRotor };
+}
+
+// ---------- minable deposits ----------
+
+const nodeGeoCache = new Map();
+function nodeGeometry(kind, seed) {
+  const key = `${kind}:${seed}`;
+  if (nodeGeoCache.has(key)) return nodeGeoCache.get(key);
+  const geo = buildRockGeometry(seed);
+  if (kind === 'iron') {
+    // Dark rock streaked with rust-orange ore veins
+    paintGeometry(geo, (c, x, y, z, ny, i) => {
+      const base = 0.17 + rand01(Math.floor(i / 3), seed, 4) * 0.07;
+      c.setRGB(base, base * 0.95, base * 0.9);
+      const vein = Math.sin(x * 5.2 + y * 3.1 + z * 4.4 + seed) + Math.sin(z * 7.3 - x * 2.2);
+      if (vein > 1.15) c.setRGB(0.62, 0.26, 0.08);
+      else if (vein > 0.85) c.setRGB(0.35, 0.17, 0.08);
+    });
+  } else if (kind === 'crystal') {
+    paintGeometry(geo, (c, x, y, z, ny, i) => {
+      const base = 0.14 + rand01(Math.floor(i / 3), seed, 6) * 0.06;
+      c.setRGB(base * 0.9, base, base * 1.2);
+    });
+  } else {
+    paintGeometry(geo, (c, x, y, z, ny, i) => {
+      const v = 0.3 + rand01(Math.floor(i / 3), seed, 8) * 0.1;
+      c.setRGB(v, v * 0.98, v * 0.94);
+      if (ny > 0.6) c.lerp(new THREE.Color(0.14, 0.26, 0.1), 0.35);
+    });
+  }
+  nodeGeoCache.set(key, geo);
+  return geo;
+}
+
+let nodeMat = null;
+let crystalMat = null;
+export function createMineNode(kind, seed = 0) {
+  if (!nodeMat) {
+    nodeMat = std(0xffffff, { vertexColors: true, roughness: 0.92 });
+    crystalMat = std(0x22d3ee, { roughness: 0.15, metalness: 0.2, emissive: 0x0ab4d6, emissiveIntensity: 1.8 });
+  }
+  const group = new THREE.Group();
+  const rock = shadowed(new THREE.Mesh(nodeGeometry(kind, seed % 5), nodeMat));
+  group.add(rock);
+  if (kind === 'crystal') {
+    for (let i = 0; i < 7; i++) {
+      const h = 0.7 + Math.random() * 0.9;
+      const spike = shadowed(new THREE.Mesh(new THREE.ConeGeometry(0.16 + Math.random() * 0.1, h, 5), crystalMat), true, false);
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * 0.45;
+      spike.position.set(Math.cos(a) * r, 0.45 + h * 0.4, Math.sin(a) * r);
+      spike.rotation.set((Math.random() - 0.5) * 0.6, 0, (Math.random() - 0.5) * 0.6);
+      group.add(spike);
+    }
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTexture(), color: new THREE.Color(0.2, 0.9, 1.0), transparent: true, opacity: 0.6,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: false
+    }));
+    halo.scale.setScalar(3.2);
+    halo.position.y = 1.0;
+    halo.raycast = () => {};
+    group.add(halo);
+  }
+  return group;
 }

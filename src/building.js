@@ -115,9 +115,10 @@ export const BUILD_RECIPES = {
 };
 
 export class BuildingSystem {
-  constructor(scene, inventory) {
+  constructor(scene, inventory, collision = null) {
     this.scene = scene;
     this.inventory = inventory;
+    this.collision = collision;
     this.active = false;
     this.selectedPieceKey = 'campfire';
     this.rotationY = 0;
@@ -388,6 +389,7 @@ export class BuildingSystem {
     }
 
     const piece = this.instantiateStructure(recipe, this.ghostMesh.position, this.ghostMesh.rotation.y);
+    piece.collider = this.addStructureCollider(piece);
     this.structures.push(piece);
     this.scene.add(piece.mesh);
 
@@ -414,9 +416,27 @@ export class BuildingSystem {
     };
   }
 
+  // Solid pieces block movement, stairs become walkable ramps, roofs and fires stay passable
+  addStructureCollider(piece) {
+    if (!this.collision) return null;
+    const [w, h, d] = piece.size;
+    const { x, y, z } = piece.position;
+    const rot = piece.mesh.rotation.y;
+    const solid = ['wood_barricade', 'wood_wall', 'wood_window', 'wood_door', 'metal_spikes', 'sandbag', 'workbench', 'wooden_bed', 'storage_chest'];
+
+    if (piece.type === 'wood_stairs') {
+      return this.collision.addRamp({ x, z, hx: w / 2, hz: d / 2, rot, base: y - h / 2, rise: h, owner: piece });
+    }
+    if (solid.includes(piece.type)) {
+      return this.collision.addBox({ x, z, hx: w / 2, hz: d / 2, rot, y0: y - h / 2, y1: y + h / 2, owner: piece });
+    }
+    return null;
+  }
+
   toggleDoor(doorStruct) {
     if (doorStruct.type !== 'wood_door') return;
     doorStruct.isOpen = !doorStruct.isOpen;
+    if (doorStruct.collider) doorStruct.collider.solid = !doorStruct.isOpen;
     doorStruct.mesh.rotation.y += doorStruct.isOpen ? (Math.PI * 0.5) : (-Math.PI * 0.5);
     sounds.playDoorSound(doorStruct.isOpen);
   }
@@ -440,6 +460,7 @@ export class BuildingSystem {
           this.inventory.addItem(res, Math.max(1, Math.floor(amt * 0.8)));
         }
         this.scene.remove(s.mesh);
+        this.collision?.remove(s.collider);
         this.structures.splice(structIdx, 1);
         sounds.playAxeChop();
         window.showTacticalNotification?.(`DISMANTLED: ${s.name} (Materials Reclaimed)`, 'info');
@@ -453,6 +474,7 @@ export class BuildingSystem {
     struct.hp -= amount;
     if (struct.hp <= 0) {
       this.scene.remove(struct.mesh);
+      this.collision?.remove(struct.collider);
       this.structures = this.structures.filter(s => s !== struct);
       sounds.playTreeFall();
     }

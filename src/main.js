@@ -13,6 +13,7 @@ import { WorldManager } from './world.js';
 import { EnemyManager } from './enemies.js';
 import { PlayerController } from './player.js';
 import { PostFX } from './postfx.js';
+import { CollisionWorld } from './collision.js';
 import { atmo, buildEnvironment } from './sky.js';
 
 const UNDERWATER_FOG = new THREE.Color(0x0b5563);
@@ -38,6 +39,10 @@ class GameEngine {
     this.damageFlash = 0;
     this.lastHp = null;
     this.menuFocus = new THREE.Vector3();
+    this.shoreProx = 0;
+    this.shoreTimer = 0;
+    this.lastLightning = 0;
+    this._fwd = new THREE.Vector3();
 
     this.initScene();
     this.initSystems();
@@ -67,15 +72,16 @@ class GameEngine {
   }
 
   initSystems() {
+    this.collision = new CollisionWorld();
     this.terrain = new Terrain(this.scene, 500, 224);
     this.weather = new WeatherSystem(this.scene);
     this.particles = new ParticleManager(this.scene);
     this.particles.setTerrain(this.terrain);
     this.survival = new SurvivalSystem();
     this.inventory = new InventorySystem(this.survival);
-    this.building = new BuildingSystem(this.scene, this.inventory);
-    this.world = new WorldManager(this.scene, this.terrain, this.inventory, this.particles);
-    this.enemies = new EnemyManager(this.scene, this.terrain, this.survival, this.building, this.particles);
+    this.building = new BuildingSystem(this.scene, this.inventory, this.collision);
+    this.world = new WorldManager(this.scene, this.terrain, this.inventory, this.particles, this.collision);
+    this.enemies = new EnemyManager(this.scene, this.terrain, this.survival, this.building, this.particles, this.collision);
 
     this.player = new PlayerController(
       this.camera,
@@ -86,7 +92,8 @@ class GameEngine {
       this.building,
       this.enemies,
       this.world,
-      this.particles
+      this.particles,
+      this.collision
     );
 
     const spawnY = this.terrain.getHeightAt(0, 0);
@@ -109,6 +116,13 @@ class GameEngine {
     // The HUD only appears once the briefing screen is dismissed
     this.hud = document.getElementById('hud-overlay');
     if (this.hud) this.hud.style.visibility = 'hidden';
+
+    // Hits from enemies: camera kick and a thump
+    window.addEventListener('player_hit', (e) => {
+      if (!this.isRunning) return;
+      this.player.screenShake = Math.max(this.player.screenShake, 0.12 + Math.min(0.2, e.detail.amount / 150));
+      sounds.playPlayerHurt(e.detail.amount);
+    });
 
     this.deployBtn.addEventListener('click', () => {
       if (this.hud) this.hud.style.visibility = '';
@@ -202,7 +216,7 @@ class GameEngine {
       if (dist < radarRange) {
         const rx = center + dx * scale;
         const ry = center + dz * scale;
-        ctx.fillStyle = e.type === 'behemoth' ? '#ef4444' : '#f87171';
+        ctx.fillStyle = e.state === 'chase' ? '#ef4444' : (e.state === 'alert' || e.state === 'search' ? '#fde047' : 'rgba(148, 163, 184, 0.75)');
         const size = e.type === 'behemoth' ? 5 : 3;
         ctx.beginPath();
         ctx.arc(rx, ry, size, 0, Math.PI * 2);
@@ -221,6 +235,68 @@ class GameEngine {
     ctx.closePath();
     ctx.fill();
     ctx.restore();
+  }
+
+  // Everything the AI needs to know about how conspicuous the player is
+  enemyEnv() {
+    const p = this.player;
+    return {
+      day: this.weather.dayCount,
+      isNight: this.weather.isNight(),
+      isRaining: this.weather.isRaining,
+      crouching: !!p.keys['KeyC'] && !p.isSwimming,
+      sprinting: p.isSprinting,
+      moving: Math.hypot(p.velocity.x, p.velocity.z) > 0.6
+    };
+  }
+
+  // Distance-to-water proxy (0 = far, 1 = standing in it) for the shoreline ambience
+  computeShore(pos) {
+    const wl = this.terrain.waterLevel;
+    let best = 999;
+    for (const r of [6, 14, 26, 40]) {
+      for (let k = 0; k < 8; k++) {
+        const a = (k / 8) * Math.PI * 2;
+        if (this.terrain.getHeightAt(pos.x + Math.cos(a) * r, pos.z + Math.sin(a) * r) < wl + 0.2) best = Math.min(best, r);
+      }
+    }
+    if (this.terrain.getHeightAt(pos.x, pos.z) < wl + 0.2) best = 0;
+    return Math.max(0, 1 - best / 40);
+  }
+
+  updateAudio(delta, playerPos) {
+    if (!sounds.initialized) return;
+    this.camera.getWorldDirection(this._fwd);
+    sounds.setListener(this.camera.position.x, this.camera.position.y, this.camera.position.z, this._fwd.x, this._fwd.y, this._fwd.z);
+
+    this.shoreTimer -= delta;
+    if (this.shoreTimer <= 0) {
+      this.shoreTimer = 0.4;
+      this.shoreProx = this.computeShore(playerPos);
+    }
+
+    // Nearest burning fire drives the crackle layer
+    let fire = null;
+    const consider = (pos) => {
+      const d = pos.distanceTo(playerPos);
+      if (!fire || d < fire.dist) fire = { pos, dist: d };
+    };
+    for (const f of this.world.fireSources) consider(f.position);
+    for (const st of this.building.structures) if (st.mesh.userData.fireLight) consider(st.position);
+
+    const w = this.weather;
+    sounds.update(delta, {
+      isNight: w.isNight(),
+      rain: Math.max(0, Math.min(1, (w.overcast - 0.15) / 0.6)),
+      altitude: Math.max(0, Math.min(1, (playerPos.y - 16) / 30)),
+      shore: this.shoreProx,
+      hpFrac: this.survival.currentHp / Math.max(1, this.survival.getMaxHp()),
+      fire
+    });
+
+    // Thunder rolls in after each lightning flash
+    if (w.lightning > 0.95 && this.lastLightning <= 0.95) sounds.playThunder(0.5 + Math.random() * 2.2);
+    this.lastLightning = w.lightning;
   }
 
   // Slow cinematic orbit around the starter camp while the briefing screen is up
@@ -275,10 +351,8 @@ class GameEngine {
     }
   }
 
-  animate() {
-    requestAnimationFrame(() => this.animate());
-
-    const delta = Math.min(0.08, this.clock.getDelta());
+  // Advances the whole simulation by `delta` seconds (no rendering), used by animate() and the playtest harness
+  tick(delta) {
     this.elapsed += delta;
 
     if (this.isRunning) {
@@ -300,33 +374,50 @@ class GameEngine {
       }
 
       this.world.update(delta);
-      this.terrain.update(delta);
-      this.enemies.update(delta, playerPos, this.building.structures);
+      this.terrain.update(delta, this.camera.position);
+      this.enemies.update(delta, playerPos, this.building.structures, this.enemyEnv());
       this.updateFires(delta);
+      this.updateAudio(delta, playerPos);
       this.particles.emitAmbient(playerPos, delta, this.weather.isNight(), this.weather.isRaining);
       this.particles.update(delta);
       this.updateBiomeDisplay(playerPos);
       this.drawRadar(playerPos, this.player.yaw);
-
-      // Check Victory Condition
-      if (this.world.extractionActive && this.world.rescueHelicopter) {
-        const distToVTOL = Math.hypot(playerPos.x - this.world.rescueHelicopter.position.x, playerPos.z - this.world.rescueHelicopter.position.z);
-        if (distToVTOL < 8.0 && playerPos.y > 22.0) {
-          window.showTacticalNotification?.('MISSION ACCOMPLISHED! EXTRACTED SUCCESSFULLY WITH BEHEMOTH TELEMETRY!', 'success');
-          this.world.extractionActive = false;
-        }
-      }
+      this.checkExtraction(playerPos);
     } else {
       this.player.weaponGroup.visible = false;
       this.updateMenuCamera();
       this.weather.update(delta, this.menuFocus, this.camera);
       this.world.update(delta);
-      this.terrain.update(delta);
+      this.terrain.update(delta, this.camera.position);
       this.updateFires(delta);
       this.particles.emitAmbient(this.menuFocus, delta, this.weather.isNight(), this.weather.isRaining);
       this.particles.update(delta);
     }
+  }
 
+  // The VTOL has to actually land on the summit; standing near the tower early does nothing
+  checkExtraction(playerPos) {
+    const heli = this.world.rescueHelicopter;
+    const tower = this.world.landmarks.find(l => l.isObjective);
+    if (!this.world.extractionActive || !heli || !tower) return;
+
+    if (this.world.extractionReady && !this.world.extractionAnnounced) {
+      this.world.extractionAnnounced = true;
+      window.showTacticalNotification?.('VTOL ON THE PAD — GET TO THE SUMMIT AND BOARD NOW!', 'success');
+    }
+    const horizontal = Math.hypot(playerPos.x - heli.position.x, playerPos.z - heli.position.z);
+    if (this.world.extractionReady && horizontal < 12 && playerPos.y > tower.position.y - 3) {
+      window.showTacticalNotification?.('MISSION ACCOMPLISHED! EXTRACTED SUCCESSFULLY WITH BEHEMOTH TELEMETRY!', 'success');
+      this.world.extractionActive = false;
+      this.won = true;
+    }
+  }
+
+  animate() {
+    requestAnimationFrame(() => this.animate());
+
+    const delta = Math.min(0.08, this.clock.getDelta());
+    this.tick(delta);
     this.updatePostFX(delta);
     this.post.render(delta, this.elapsed);
   }
@@ -334,5 +425,13 @@ class GameEngine {
 
 window.addEventListener('DOMContentLoaded', () => {
   const game = new GameEngine();
-  if (import.meta.env.DEV) window.__game = game;
+  if (import.meta.env.DEV) {
+    window.__game = game;
+    if (new URLSearchParams(window.location.search).has('playtest')) {
+      import('./playtest.js').then(({ Playtest }) => {
+        window.__playtest = new Playtest(game);
+        window.__playtest.mountOverlay();
+      });
+    }
+  }
 });

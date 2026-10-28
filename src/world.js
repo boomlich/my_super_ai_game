@@ -2,11 +2,18 @@
 import * as THREE from 'three';
 import { sounds } from './audio.js';
 import { plankTexture, metalTexture, glowTexture } from './textures.js';
+import { HEIGHT_LIFT } from './terrain.js';
 import {
   std, emissiveMat, shadowed, createPine, createBerryBush, createScrapPile, createCrate, createTent, strut,
   bunkerMaterial, sandbagMaterial, buildRockGeometry, buildBushGeometry, buildGrassTuft, createGrassMaterial,
-  buildFlowerGeometry, createLootMesh, createHelicopter
+  buildFlowerGeometry, createLootMesh, createHelicopter, createMineNode
 } from './models.js';
+
+export const NODE_KINDS = {
+  stone: { name: 'Stone Boulder', label: 'Stone', hp: 120, item: 'stone', perHit: [1, 2], bonus: 3, scale: [1.5, 2.2], spark: 0xb8b2a6 },
+  iron: { name: 'Iron Ore Vein', label: 'Scrap Metal', hp: 160, item: 'scrap', perHit: [1, 2], bonus: 3, scale: [1.3, 1.9], spark: 0xd9772b },
+  crystal: { name: 'Tech Crystal Cluster', label: 'Tech Component', hp: 200, item: 'component', perHit: [1, 1], bonus: 2, scale: [1.2, 1.7], spark: 0x67e8f9 }
+};
 
 const TOWER_X = -120;
 const TOWER_Z = -140;
@@ -14,11 +21,12 @@ const BUNKER_X = 60;
 const BUNKER_Z = -40;
 
 export class WorldManager {
-  constructor(scene, terrain, inventory, particles = null) {
+  constructor(scene, terrain, inventory, particles = null, collision = null) {
     this.scene = scene;
     this.terrain = terrain;
     this.inventory = inventory;
     this.particles = particles;
+    this.collision = collision;
 
     this.trees = [];
     this.fallingTrees = [];
@@ -26,9 +34,13 @@ export class WorldManager {
     this.pickups = [];
     this.landmarks = [];
     this.fireSources = [];
+    this.mineNodes = [];
+    this.respawningNodes = [];
 
     this.extractionActive = false;
     this.extractionTimer = 0;
+    this.extractionDuration = 75;
+    this.extractionReady = false;
     this.rescueHelicopter = null;
     this.heliParts = null;
 
@@ -36,9 +48,19 @@ export class WorldManager {
     this.beacon = null;
 
     this.spawnFloraAndResources();
+    this.spawnMineNodes();
     this.spawnDecor();
     this.spawnLandmarks();
     this.initLootListener();
+    this.initTrampleListener();
+  }
+
+  // Large creatures flatten trees they walk into
+  initTrampleListener() {
+    window.addEventListener('trample_tree', (e) => {
+      const { tree, dir } = e.detail;
+      if (tree && this.trees.includes(tree)) this.fellTree(tree, dir);
+    });
   }
 
   initLootListener() {
@@ -67,23 +89,28 @@ export class WorldManager {
       const z = Math.sin(angle) * radius;
       const y = this.terrain.getHeightAt(x, z);
 
-      if (y > 2.8 && y < 25 && !this.nearLandmark(x, z) && this.isFlat(x, z, 1.4)) {
-        const treeGroup = createPine(y > 15);
+      if (y > 2.8 && y < 25 + HEIGHT_LIFT && !this.nearLandmark(x, z) && this.isFlat(x, z, 1.4)) {
+        const treeGroup = createPine(y > 15 + HEIGHT_LIFT);
         treeGroup.position.set(x, y - 0.15, z);
         const scale = 0.8 + Math.random() * 0.65;
         treeGroup.scale.set(scale, scale * (0.95 + Math.random() * 0.15), scale);
         treeGroup.rotation.y = Math.random() * Math.PI * 2;
         this.scene.add(treeGroup);
 
-        this.trees.push({
+        const owner = { type: 'tree', tree: null };
+        const collider = this.collision?.addCircle({ x, z, r: 0.5 * scale, y0: y - 1, y1: y + 12, owner });
+        const record = {
           mesh: treeGroup,
+          collider,
           hp: 100,
           maxHp: 100,
           position: new THREE.Vector3(x, y, z),
           scale,
           height: 7.5 * scale,
           fallDirection: new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize()
-        });
+        };
+        owner.tree = record;
+        this.trees.push(record);
       }
     }
 
@@ -94,7 +121,7 @@ export class WorldManager {
       const z = Math.sin(angle) * radius;
       const y = this.terrain.getHeightAt(x, z);
 
-      if (y > 2.8 && y < 18 && !this.nearLandmark(x, z)) {
+      if (y > 2.8 && y < 18 + HEIGHT_LIFT && !this.nearLandmark(x, z)) {
         const bush = createBerryBush();
         bush.position.set(x, y - 0.05, z);
         bush.rotation.y = Math.random() * Math.PI * 2;
@@ -118,7 +145,7 @@ export class WorldManager {
       const z = Math.sin(angle) * radius;
       const y = this.terrain.getHeightAt(x, z);
 
-      if (y > 2.8 && y < 26 && !this.nearLandmark(x, z)) {
+      if (y > 2.8 && y < 26 + HEIGHT_LIFT && !this.nearLandmark(x, z)) {
         const scrap = createScrapPile();
         scrap.position.set(x, y - 0.05, z);
         scrap.rotation.y = Math.random() * Math.PI * 2;
@@ -131,6 +158,100 @@ export class WorldManager {
           yieldId: 'scrap',
           yieldCount: 4
         });
+      }
+    }
+  }
+
+  // Pickaxe deposits: stone in the lowlands, iron on the slopes, tech crystals near the summit
+  spawnMineNodes() {
+    const wl = this.terrain.waterLevel;
+    const placed = [];
+    const place = (kind, count, accept) => {
+      let made = 0;
+      for (let attempt = 0; attempt < 600 && made < count; attempt++) {
+        const ang = Math.random() * Math.PI * 2;
+        const r = 14 + Math.random() * 215;
+        const x = Math.cos(ang) * r;
+        const z = Math.sin(ang) * r;
+        const y = this.terrain.getHeightAt(x, z);
+        if (y < wl + 0.8 || this.nearLandmark(x, z, 4) || !this.terrain.isWalkable(x, z) || !accept(x, z, y)) continue;
+        if (placed.some(p => Math.hypot(p.x - x, p.z - z) < 9)) continue;
+        placed.push({ x, z });
+        this.addMineNode(kind, x, y, z);
+        made++;
+      }
+    };
+    const peakDist = (x, z) => Math.hypot(x - TOWER_X, z - TOWER_Z);
+    place('stone', 34, (x, z, y) => y < 22 + HEIGHT_LIFT && this.isFlat(x, z, 1.6));
+    place('iron', 16, (x, z, y) => y > 8 + HEIGHT_LIFT && y < 30 + HEIGHT_LIFT && peakDist(x, z) < 150);
+    place('crystal', 7, (x, z, y) => y > 15 + HEIGHT_LIFT && peakDist(x, z) < 95);
+  }
+
+  addMineNode(kind, x, y, z) {
+    const def = NODE_KINDS[kind];
+    const mesh = createMineNode(kind, Math.floor(Math.random() * 50));
+    const baseScale = def.scale[0] + Math.random() * (def.scale[1] - def.scale[0]);
+    mesh.position.set(x, y + 0.1, z);
+    mesh.rotation.y = Math.random() * Math.PI * 2;
+    mesh.scale.set(baseScale, baseScale * (0.85 + Math.random() * 0.3), baseScale);
+    this.scene.add(mesh);
+
+    const radius = baseScale * 0.9;
+    const node = {
+      mesh, kind, name: def.name, def,
+      hp: def.hp, maxHp: def.hp,
+      position: new THREE.Vector3(x, y, z),
+      radius, baseScale, baseY: mesh.position.y,
+      shake: 0, collider: null
+    };
+    node.collider = this.collision?.addCircle({ x, z, r: radius, y0: y - 1, y1: y + baseScale * 1.4, owner: { type: 'node', node } }) ?? null;
+    this.mineNodes.push(node);
+    return node;
+  }
+
+  // Applies a pickaxe blow. Returns { items: [{id, count}], broken }
+  damageNode(node, damage) {
+    const def = node.def;
+    node.hp -= damage;
+    node.shake = 0.3;
+    const frac = Math.max(0, node.hp / node.maxHp);
+    node.mesh.scale.setScalar(node.baseScale * (0.7 + 0.3 * frac));
+
+    const count = def.perHit[0] + Math.floor(Math.random() * (def.perHit[1] - def.perHit[0] + 1));
+    const items = [{ id: def.item, count }];
+    let broken = false;
+    if (node.hp <= 0) {
+      broken = true;
+      items.push({ id: def.item, count: def.bonus });
+      this.collision?.remove(node.collider);
+      node.collider = null;
+      node.mesh.visible = false;
+      this.respawningNodes.push({ node, timer: 240 });
+    }
+    return { items, broken };
+  }
+
+  updateNodes(delta) {
+    for (const n of this.mineNodes) {
+      if (n.shake > 0) {
+        n.shake = Math.max(0, n.shake - delta * 1.6);
+        n.mesh.position.x = n.position.x + (Math.random() - 0.5) * n.shake * 0.12;
+        n.mesh.position.z = n.position.z + (Math.random() - 0.5) * n.shake * 0.12;
+      }
+    }
+    for (let i = this.respawningNodes.length - 1; i >= 0; i--) {
+      const r = this.respawningNodes[i];
+      r.timer -= delta;
+      if (r.timer <= 0) {
+        const n = r.node;
+        n.hp = n.maxHp;
+        n.mesh.scale.setScalar(n.baseScale);
+        n.mesh.visible = true;
+        n.collider = this.collision?.addCircle({
+          x: n.position.x, z: n.position.z, r: n.radius,
+          y0: n.position.y - 1, y1: n.position.y + n.baseScale * 1.4, owner: { type: 'node', node: n }
+        }) ?? null;
+        this.respawningNodes.splice(i, 1);
       }
     }
   }
@@ -151,7 +272,7 @@ export class WorldManager {
       const x = Math.cos(ang) * r;
       const z = Math.sin(ang) * r;
       const y = this.terrain.getHeightAt(x, z);
-      if (y < wl + 0.7 || y > 17) continue;
+      if (y < wl + 0.7 || y > 17 + HEIGHT_LIFT) continue;
       if (Math.hypot(x, z) < 5 || Math.hypot(x - BUNKER_X, z - BUNKER_Z) < 8) continue;
       if (!this.isFlat(x, z, 0.9)) continue;
 
@@ -182,7 +303,7 @@ export class WorldManager {
       const x = Math.cos(ang) * r;
       const z = Math.sin(ang) * r;
       const y = this.terrain.getHeightAt(x, z);
-      if (y < wl + 0.9 || y > 12 || Math.hypot(x, z) < 6 || !this.isFlat(x, z, 0.8)) continue;
+      if (y < wl + 0.9 || y > 12 + HEIGHT_LIFT || Math.hypot(x, z) < 6 || !this.isFlat(x, z, 0.8)) continue;
       dummy.position.set(x, y, z);
       dummy.rotation.set(0, Math.random() * 6, 0);
       dummy.scale.setScalar(0.8 + Math.random() * 0.6);
@@ -213,6 +334,10 @@ export class WorldManager {
       dummy.scale.set(s * (0.8 + Math.random() * 0.5), s * (0.7 + Math.random() * 0.5), s * (0.8 + Math.random() * 0.5));
       dummy.updateMatrix();
       rocks.setMatrixAt(n, dummy.matrix);
+      this.collision?.addCircle({
+        x, z, r: Math.max(dummy.scale.x, dummy.scale.z) * 0.85,
+        y0: y - 1, y1: y + 0.15 + dummy.scale.y * 0.75, owner: { type: 'rock' }
+      });
       const v = 0.8 + Math.random() * 0.4;
       rocks.setColorAt(n, color.setRGB(v, v, v));
       n++;
@@ -232,7 +357,7 @@ export class WorldManager {
       const x = Math.cos(ang) * r;
       const z = Math.sin(ang) * r;
       const y = this.terrain.getHeightAt(x, z);
-      if (y < wl + 0.8 || y > 18 || this.nearLandmark(x, z)) continue;
+      if (y < wl + 0.8 || y > 18 + HEIGHT_LIFT || this.nearLandmark(x, z)) continue;
       dummy.position.set(x, y - 0.05, z);
       dummy.rotation.set(0, Math.random() * 6, 0);
       dummy.scale.setScalar(0.6 + Math.random() * 1.0);
@@ -340,6 +465,22 @@ export class WorldManager {
     camp.add(halo);
 
     this.scene.add(camp);
+
+    const col = this.collision;
+    if (col) {
+      const top = ground + 2.4;
+      for (const t of [tentA, tentB]) {
+        col.addBox({ x: t.position.x, z: t.position.z, hx: 1.3, hz: 1.6, rot: t.rotation.y, y0: ground, y1: top });
+      }
+      for (const c of [crateA, crateB, crateC]) {
+        col.addBox({ x: c.position.x, z: c.position.z, hx: 0.42, hz: 0.42, rot: c.rotation.y, y0: ground, y1: ground + 1.5 });
+      }
+      col.addBox({ x: 2.2, z: 0, hx: 0.95, hz: 0.24, rot: 0, y0: ground, y1: ground + 0.9 });
+      col.addBox({ x: -2.1, z: 0.3, hx: 0.95, hz: 0.24, rot: 0, y0: ground, y1: ground + 0.9 });
+      col.addBox({ x: 0.2, z: 2.2, hx: 0.24, hz: 0.95, rot: 0, y0: ground, y1: ground + 0.9 });
+      col.addCircle({ x: 3.0, z: 2.6, r: 0.12, y0: ground, y1: ground + 3 });
+      col.addCircle({ x: 0, z: 0, r: 0.5, y0: ground + 0.1, y1: ground + 0.9 });
+    }
   }
 
   buildBunker() {
@@ -397,6 +538,8 @@ export class WorldManager {
     barrel.position.set(-6.8, 0, 2);
     group.add(barrel);
     this.scene.add(group);
+
+    this.collision?.addBox({ x: BUNKER_X, z: BUNKER_Z, hx: 6.3, hz: 5.3, rot: 0, y0: y, y1: y + 4.3, owner: { type: 'bunker' } });
   }
 
   buildRadioTower() {
@@ -470,6 +613,15 @@ export class WorldManager {
     this.beacon = { bulb, light: beaconLight, base: 700 };
 
     this.scene.add(group);
+
+    const col = this.collision;
+    if (col) {
+      for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        col.addCircle({ x: TOWER_X + sx * 1.8, z: TOWER_Z + sz * 1.8, r: 0.32, y0: y, y1: y + 30 });
+      }
+      col.addBox({ x: TOWER_X + 4.2, z: TOWER_Z - 1.0, hx: 1.7, hz: 1.4, rot: 0, y0: y, y1: y + 2.7 });
+      col.addBox({ x: TOWER_X, z: TOWER_Z + 2, hx: 0.65, hz: 0.45, rot: 0, y0: y, y1: y + 1.1 });
+    }
     this.landmarks.push({
       name: 'RADIO RELAY STATION',
       position: new THREE.Vector3(TOWER_X, y, TOWER_Z),
@@ -488,6 +640,7 @@ export class WorldManager {
 
   fellTree(tree, pushDir) {
     this.trees = this.trees.filter(t => t !== tree);
+    this.collision?.remove(tree.collider);
     const fallDir = pushDir ? new THREE.Vector3(pushDir.x, 0, pushDir.z).normalize() : tree.fallDirection;
 
     sounds.playTreeFall();
@@ -504,6 +657,7 @@ export class WorldManager {
 
   update(delta) {
     this.time += delta;
+    this.updateNodes(delta);
 
     for (let i = this.fallingTrees.length - 1; i >= 0; i--) {
       const ft = this.fallingTrees[i];
@@ -546,10 +700,11 @@ export class WorldManager {
     }
 
     if (this.extractionActive && this.rescueHelicopter) {
-      this.extractionTimer -= delta;
-      if (this.rescueHelicopter.position.y > 18.0) {
-        this.rescueHelicopter.position.y -= 4.0 * delta;
-      }
+      this.extractionTimer = Math.max(0, this.extractionTimer - delta);
+      const k = Math.min(1, 1 - this.extractionTimer / this.extractionDuration);
+      const eased = 1 - Math.pow(1 - k, 2);
+      this.rescueHelicopter.position.y = this.heliStartY + (this.heliHoverY - this.heliStartY) * eased;
+      this.extractionReady = this.extractionTimer <= 0;
       if (this.heliParts) {
         this.heliParts.rotor.rotation.y += 38 * delta;
         this.heliParts.tailRotor.rotation.x += 50 * delta;
@@ -651,7 +806,10 @@ export class WorldManager {
     }
 
     this.extractionActive = true;
-    this.extractionTimer = 60.0;
+    this.extractionReady = false;
+    this.extractionAnnounced = false;
+    this.extractionDuration = 75.0;
+    this.extractionTimer = this.extractionDuration;
     sounds.playRaidAlarm();
 
     const heli = createHelicopter();
@@ -665,10 +823,13 @@ export class WorldManager {
     heliGroup.add(searchlight.target);
 
     const tower = this.landmarks.find(l => l.isObjective);
-    heliGroup.position.set(tower.position.x, tower.position.y + 40, tower.position.z);
+    this.heliStartY = tower.position.y + 45;
+    this.heliHoverY = tower.position.y + 7.5;
+    heliGroup.position.set(tower.position.x + 3, this.heliStartY, tower.position.z + 3);
     this.scene.add(heliGroup);
     this.rescueHelicopter = heliGroup;
+    window.dispatchEvent(new CustomEvent('extraction_started'));
 
-    window.showTacticalNotification?.('TRANSMISSION SENT! EXTRACTION VTOL INBOUND! SURVIVE AND REACH THE SUMMIT SEARCHLIGHT!', 'success');
+    window.showTacticalNotification?.('TRANSMISSION SENT! VTOL lands in 75 seconds — HOLD THE SUMMIT until it touches down!', 'success');
   }
 }
